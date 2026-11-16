@@ -1,0 +1,29 @@
+# Locally installed drivers, executables and model artifacts
+*.exe
+*.dll
+*.pt
+*.pth
+*.onnx
+*.engine
+*.avi
+*.mp4
+*.mov
+*.mkv
+*.wmv
+
+# Local environments and generated output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+logs/
+recordings/
+validation/
+screenshots/
+models/
+.DS_Store
+.env
+.env.*
