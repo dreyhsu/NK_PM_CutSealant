@@ -1,0 +1,318 @@
+"""Display functionality extracted from CutSealant V6.0.7."""
+import os
+import tkinter as tk
+from datetime import datetime
+
+import cv2
+import numpy as np
+
+class Display:
+    """Composed service; context supplies shared application interfaces."""
+
+    def __init__(self, context):
+        self.context = context
+
+    def _check_correct_carrier(self, categories, boxes):
+        """Check for correct carrier detection"""
+        ctx = self.context
+        carrier_indices = [i for i, cat in enumerate(categories) if cat == ctx.class_map['carrier']]
+        if len(carrier_indices) == 1:
+            return boxes[carrier_indices[0]]
+        elif len(carrier_indices) > 1:
+            # Multiple carriers detected, choose the largest one
+            areas = []
+            for idx in carrier_indices:
+                box = boxes[idx]
+                area = (box[2] - box[0]) * (box[3] - box[1])
+                areas.append(area)
+            largest_idx = carrier_indices[np.argmax(areas)]
+            return boxes[largest_idx]
+        return None
+
+    def _calculate_iou(self, box1, box2):
+        """
+        Calculate Intersection over Union (IoU) between two boxes
+        Args:
+            box1: [x1, y1, x2, y2] format
+            box2: [x1, y1, x2, y2] format or box_key string "x1_y1_x2_y2"
+        Returns:
+            IoU value (0.0 to 1.0)
+        """
+        ctx = self.context
+        # Handle box_key string format
+        if isinstance(box2, str):
+            coords = box2.split('_')
+            box2 = [int(coords[0]), int(coords[1]), int(coords[2]), int(coords[3])]
+
+        # Calculate intersection area
+        x1_inter = max(box1[0], box2[0])
+        y1_inter = max(box1[1], box2[1])
+        x2_inter = min(box1[2], box2[2])
+        y2_inter = min(box1[3], box2[3])
+
+        # Check if there is intersection
+        if x2_inter < x1_inter or y2_inter < y1_inter:
+            return 0.0
+
+        intersection_area = (x2_inter - x1_inter) * (y2_inter - y1_inter)
+
+        # Calculate union area
+        box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union_area = box1_area + box2_area - intersection_area
+
+        # Calculate IoU
+        if union_area == 0:
+            return 0.0
+
+        iou = intersection_area / union_area
+        return iou
+
+    def _find_matching_box(self, current_box, stored_box_keys, iou_threshold=0.75):
+        """
+        Find matching box from stored results using IoU matching
+        Args:
+            current_box: Current detection box [x1, y1, x2, y2]
+            stored_box_keys: Dictionary keys of stored detection results
+            iou_threshold: Minimum IoU to consider as a match (default: 0.75)
+        Returns:
+            Matching box_key if found, None otherwise
+        """
+        ctx = self.context
+        best_iou = 0.0
+        best_match = None
+
+        for box_key in stored_box_keys:
+            iou = ctx._calculate_iou(current_box, box_key)
+            if iou > best_iou and iou >= iou_threshold:
+                best_iou = iou
+                best_match = box_key
+
+        return best_match
+
+    def _draw_detections(self, frame, boxes, categories, correct_carrier_box):
+        """Draw detection boxes and return sealant boxes"""
+        ctx = self.context
+        sealant_boxes = []
+
+        for i, (box, category) in enumerate(zip(boxes, categories)):
+            color = (0, 255, 0) if category == ctx.class_map['carrier'] else (255, 0, 0)
+
+            # Only draw carrier if it's the correct one
+            if category == ctx.class_map['carrier']:
+                if np.array_equal(box, correct_carrier_box):
+                    cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, 2)
+                    #cv2.putText(frame, 'carrier', (box[0], box[1]-10),
+                    #           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+            else:
+                # This is a sealant
+                sealant_boxes.append(box)
+
+                # Determine color based on detection result using IoU matching
+                if ctx.detection_state == 'RESULT_HOLD' and ctx.sealant_detection_results:
+                    # Use IoU matching instead of exact coordinate matching
+                    matched_box_key = ctx._find_matching_box(box, ctx.sealant_detection_results.keys())
+                    if matched_box_key:
+                        is_broken = ctx.sealant_detection_results[matched_box_key]
+                        color = (0, 0, 255) if is_broken else (0, 255, 0)  # Red if broken, green if OK
+                        status_text = 'NG' if is_broken else 'OK'
+                        #cv2.putText(frame, status_text, (box[0], box[1]-25),
+                        #           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+
+                cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, 2)
+                #cv2.putText(frame, 'sealant', (box[0], box[1]-10),
+                #           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+
+        return sealant_boxes
+
+    def _get_screen_size(self):
+        """Get actual screen size using tkinter (cached)"""
+        ctx = self.context
+        if ctx.cached_screen_size is not None:
+            return ctx.cached_screen_size
+
+        try:
+            root = tk.Tk()
+            root.withdraw()  # Hide the window
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+            root.destroy()
+            ctx.cached_screen_size = (screen_width, screen_height)
+            return screen_width, screen_height
+        except Exception:
+            # Fallback to default values
+            ctx.cached_screen_size = (1920, 1080)
+            return 1920, 1080
+
+    def _create_display_window(self, window_name):
+        """Create display window with proper flags for fullscreen support"""
+        ctx = self.context
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, 800, 600)  # Initial size
+
+    def _display_frame(self, frame, window_name):
+        """Display frame with auto-fit capability"""
+        ctx = self.context
+        try:
+            display_frame = frame.copy()
+
+            if ctx.fit_screen_mode and ctx.display_config.get('auto_fit_screen', True):
+                # Get actual screen size (cached)
+                screen_width, screen_height = ctx._get_screen_size()
+
+                # Get frame dimensions
+                frame_height, frame_width = display_frame.shape[:2]
+
+                # Calculate scale to fit screen
+                scale_x = screen_width * 0.85 / frame_width  # Use 85% of screen width
+                scale_y = screen_height * 0.85 / frame_height  # Use 85% of screen height
+                scale = min(scale_x, scale_y)
+
+                # Apply min/max scale limits
+                max_scale = ctx.display_config.get('max_scale', 2.0)
+                min_scale = ctx.display_config.get('min_scale', 0.2)
+                scale = max(min_scale, min(max_scale, scale))
+
+                if scale != 1.0:
+                    new_width = int(frame_width * scale)
+                    new_height = int(frame_height * scale)
+                    display_frame = cv2.resize(display_frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+            # === Draw shortcut hints after scaling (fixed position/size regardless of zoom) ===
+            dh, dw = display_frame.shape[:2]
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.55
+            thickness = 1
+
+            # --- Bottom bar: general shortcuts (white, always visible) ---
+            shortcut_text = "[Q] Quit  [S] Screenshot  [F] Fit Screen  [G] Fullscreen  [P] Statistics  [R] Reset  [V] Recording"
+            text_size = cv2.getTextSize(shortcut_text, font, font_scale, thickness)[0]
+            bar_x = (dw - text_size[0]) // 2
+            bar_y = dh - 12
+            overlay = display_frame.copy()
+            cv2.rectangle(overlay, (0, dh - 30), (dw, dh), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.5, display_frame, 0.5, 0, display_frame)
+            cv2.putText(display_frame, shortcut_text, (bar_x, bar_y),
+                        font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+            # --- M key hint: center-right, blue, only in RESULT_HOLD ---
+            if ctx.detection_state == 'RESULT_HOLD':
+                m_text = "[M] Manual Review"
+                m_size = cv2.getTextSize(m_text, font, 0.75, 2)[0]
+                m_x = dw - m_size[0] - 30
+                m_y = dh // 2
+                overlay2 = display_frame.copy()
+                pad = 8
+                cv2.rectangle(overlay2,
+                              (m_x - pad, m_y - m_size[1] - pad),
+                              (m_x + m_size[0] + pad, m_y + pad),
+                              (0, 0, 0), -1)
+                cv2.addWeighted(overlay2, 0.5, display_frame, 0.5, 0, display_frame)
+                cv2.putText(display_frame, m_text, (m_x, m_y),
+                            font, 0.75, (255, 80, 0), 2, cv2.LINE_AA)
+
+            cv2.imshow(window_name, display_frame)
+
+        except Exception as e:
+            error_msg = f"Display error: {e}"
+            print(error_msg)
+            if ctx.logger:
+                ctx.logger.log_error("display_error", e)
+
+    def _toggle_fit_screen(self):
+        """Toggle fit screen mode on/off"""
+        ctx = self.context
+        ctx.fit_screen_mode = not ctx.fit_screen_mode
+        mode_str = "ON" if ctx.fit_screen_mode else "OFF"
+        print(f"Fit screen mode: {mode_str}")
+        if ctx.logger:
+            ctx.logger.log_system_event("fit_screen_toggled", {"mode": mode_str})
+
+    def _take_screenshot(self, frame):
+        """Take a screenshot and save to file"""
+        ctx = self.context
+        try:
+            # Create screenshot directory if it doesn't exist
+            if not os.path.exists(ctx.screenshot_path):
+                os.makedirs(ctx.screenshot_path)
+
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
+            filename = f"{ctx.screenshot_path}screenshot_{timestamp}.jpg"
+
+            # Save the frame
+            cv2.imwrite(filename, frame)
+
+            print(f"Screenshot saved: {filename}")
+            if ctx.logger:
+                ctx.logger.log_system_event("screenshot_saved", {"filename": filename})
+
+        except Exception as e:
+            error_msg = f"Screenshot error: {e}"
+            print(error_msg)
+            if ctx.logger:
+                ctx.logger.log_error("screenshot_error", e)
+
+    def _toggle_fullscreen(self, window_name):
+        """Toggle fullscreen mode"""
+        ctx = self.context
+        try:
+            ctx.is_fullscreen = not ctx.is_fullscreen
+            if ctx.is_fullscreen:
+                cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                print("Fullscreen mode: ON")
+            else:
+                cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                print("Fullscreen mode: OFF")
+
+            if ctx.logger:
+                ctx.logger.log_system_event("fullscreen_toggled", {"fullscreen": ctx.is_fullscreen})
+        except Exception as e:
+            print(f"Fullscreen toggle error: {e}")
+
+    def _add_ui_elements(self, frame, current_status):
+        """Add UI elements to frame"""
+        ctx = self.context
+        h, w = frame.shape[:2]
+
+        # Add crosshair if enabled
+        if ctx.display_config.get('show_crosshair', True):
+            cv2.line(frame, (w//2-20, h//2), (w//2+20, h//2), (255, 255, 255), 1)
+            cv2.line(frame, (w//2, h//2-20), (w//2, h//2+20), (255, 255, 255), 1)
+
+        # Add timestamp if enabled
+        if ctx.display_config.get('show_timestamp', True):
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cv2.putText(frame, timestamp, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
+
+        # Add status if enabled
+        if ctx.display_config.get('show_status', True):
+            status_text = f"Status: {current_status}"
+            cv2.putText(frame, status_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
+
+        # === NEW: Add detection state information ===
+        state_text = f"State: {ctx.detection_state}"
+        state_color = {
+            'WAITING': (0, 255, 255),      # Yellow
+            'DETECTED': (255, 165, 0),     # Orange
+            'RESULT_HOLD': (0, 255, 0) if ctx.detection_result == 'Pass' else (0, 0, 255)  # Green/Red
+        }.get(ctx.detection_state, (255, 255, 255))
+
+        cv2.putText(frame, state_text, (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.5, state_color, 3, cv2.LINE_AA)
+
+        # Show detection result if available
+        if ctx.detection_result:
+            result_text = f"Result: {ctx.detection_result}"
+            result_color = (0, 255, 0) if ctx.detection_result == 'Pass' else (0, 0, 255)
+            cv2.putText(frame, result_text, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 1.5, result_color, 3, cv2.LINE_AA)
+
+        # Add sealant detection results if available
+        if ctx.detection_state == 'RESULT_HOLD' and ctx.sealant_detection_results:
+            broken_count = sum(1 for is_broken in ctx.sealant_detection_results.values() if is_broken)
+            total_count = len(ctx.sealant_detection_results)
+
+            if broken_count > 0:
+                status_text = f"Broken: {broken_count}/{total_count}"
+                cv2.putText(frame, status_text, (10, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3, cv2.LINE_AA)
+            else:
+                cv2.putText(frame, "All sealant OK", (10, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3, cv2.LINE_AA)

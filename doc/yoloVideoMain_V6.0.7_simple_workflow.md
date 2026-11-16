@@ -1,6 +1,6 @@
 # 斷膠檢測：簡化流程與四個區域的處理
 
-依據目前的 `yoloVideoMain_V6.0.7.py` 和 `config_v6.0.ini`。以下燈號表示程式要求的燈號，不代表已確認硬體實際執行成功。
+依據 V6.0.7 原始行為和 `config_v6.0.ini`。目前已拆分為 [cutsealant 模組](../cutsealant/)，原始主程式保留為相容啟動入口；以下流程不變。以下燈號表示程式要求的燈號，不代表已確認硬體實際執行成功。
 
 ## 簡化流程
 
@@ -63,8 +63,8 @@ YOLO 負責找「載具」和「膠材」的位置；斷膠結果來自後續 Op
 
 ## 對照程式碼
 
-- [YOLO 推論：`_yolo_detect`](../yoloVideoMain_V6.0.7.py#L1494)
-- [觸發條件及整體結果：`_check_detection_trigger`](../yoloVideoMain_V6.0.7.py#L1844)
-- [逐框分析及彙總：`_cut_sealant_detection`](../yoloVideoMain_V6.0.7.py#L2304)
-- [實際凸性檢查：`_loop_closed_identify`](../yoloVideoMain_V6.0.7.py#L2345)
-- [收集膠材框：`_draw_detections`](../yoloVideoMain_V6.0.7.py#L2507)
+- [YOLO 推論：`_yolo_detect`](../cutsealant/detector.py)
+- [觸發條件及整體結果：`_check_detection_trigger`](../cutsealant/workflow.py)
+- [逐框分析及彙總：`_cut_sealant_detection`](../cutsealant/inspection.py)
+- [實際凸性檢查：`_loop_closed_identify`](../cutsealant/inspection.py)
+- [收集膠材框：`_draw_detections`](../cutsealant/display.py)

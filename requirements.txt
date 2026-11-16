@@ -1,0 +1,7 @@
+# Runtime. Python 3.12 is the development/test baseline.
+numpy
+opencv-python
+ultralytics
+pyusb
+# Optional memory metrics: pip install psutil
+# TIS SDK DLLs and the Windows USB backend are installed separately; see README.

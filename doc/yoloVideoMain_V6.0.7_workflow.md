@@ -1,6 +1,6 @@
 # CutSealant V6.0.7 workflow
 
-Source: [yoloVideoMain_V6.0.7.py](../yoloVideoMain_V6.0.7.py). These Mermaid charts describe the current implementation. View this file in a Markdown viewer that supports Mermaid.
+Source: the original V6.0.7 implementation, preserved in Git commit `1b341eb`. The former main script is now a compatibility launcher; the same behavior is split across the [cutsealant package](../cutsealant/) described in the [README](../README.md). These Mermaid charts remain applicable after the behavior-preserving refactor. View this file in a Markdown viewer that supports Mermaid.
 
 ## 1. Application and processing threads
 

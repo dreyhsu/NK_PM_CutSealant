@@ -1,5 +1,6 @@
 """Shared fixtures for baseline and modular behavior tests. Never access hardware."""
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -28,7 +29,14 @@ def legacy():
     sys.modules["ultralytics"] = stub
     spec = importlib.util.spec_from_file_location("legacy_cutsealant", ROOT / "yoloVideoMain_V6.0.7.py")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    baseline = os.environ.get("CUTSEALANT_BASELINE_REF")
+    if baseline:
+        source = subprocess.check_output(
+            ["git", "show", f"{baseline}:yoloVideoMain_V6.0.7.py"], cwd=ROOT, text=True
+        )
+        exec(compile(source, str(ROOT / "yoloVideoMain_V6.0.7.py"), "exec"), module.__dict__)
+    else:
+        spec.loader.exec_module(module)
     yield module
     if original is None:
         sys.modules.pop("ultralytics", None)
