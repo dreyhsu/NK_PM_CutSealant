@@ -1,0 +1,5 @@
+# Model-free automated tests; uses real OpenCV image operations and simulated I/O.
+numpy
+opencv-python
+pyusb
+pytest
