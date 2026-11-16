@@ -6,7 +6,7 @@ Source: the original V6.0.7 implementation, preserved in Git commit `1b341eb`. T
 
 ```mermaid
 flowchart TD
-    START([Start: main]) --> CONFIG["Read config_v6.0.ini<br/>Create defaults if missing"]
+    START([Start: main]) --> CONFIG["Read config/config.ini<br/>Create defaults if missing"]
     CONFIG --> LOGS["Initialize JSON, error, statistics and rejudge logs<br/>when save_detection_log is enabled"]
     LOGS --> MODEL["Check external model file exists<br/>Load YOLO onto configured device"]
     MODEL --> SOURCE["Open video file, USB/UVC camera<br/>or TIS industrial camera"]

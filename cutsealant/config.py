@@ -4,9 +4,9 @@ import os
 
 
 class ConfigManager:
-    """Configuration manager for reading config.ini with logging support"""
+    """Read config/config.ini with logging support."""
 
-    def __init__(self, config_file='config_v6.0.ini'):
+    def __init__(self, config_file='config/config.ini'):
         self.config = configparser.ConfigParser()
         self.config_file = config_file
         self.load_config()
@@ -96,6 +96,11 @@ class ConfigManager:
             'fps': '15',
             'quality': 'medium'  # 'low', 'medium', 'high'
         }
+
+        # Create the destination directory before saving a new config.
+        config_dir = os.path.dirname(self.config_file)
+        if config_dir:
+            os.makedirs(config_dir, exist_ok=True)
 
         # Save default config
         with open(self.config_file, 'w') as f:

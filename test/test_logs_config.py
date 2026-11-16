@@ -10,7 +10,7 @@ def test_config_defaults_and_supplied_ini(legacy, tmp_path):
     assert config.get_device() == "cpu"
     assert config.get_classes() == {"carrier": 0, "sealant": 1}
     root = Path(__file__).resolve().parents[1]
-    supplied = legacy.ConfigManager(str(root / "config_v6.0.ini"))
+    supplied = legacy.ConfigManager(str(root / "config" / "config.ini"))
     assert supplied.get_device() == "mps"
     assert supplied.get_detection_config()["absent_tolerance_frames"] == 5
     assert supplied.get_rejudge_config()["review_window_padding"] == 50
@@ -21,6 +21,29 @@ def test_invalid_numeric_config_raises(legacy, tmp_path):
     config.config["DETECTION_SETTINGS"]["fps"] = "invalid"
     with pytest.raises(ValueError):
         config.get_detection_config()
+
+
+def test_default_config_uses_versionless_config_folder(tmp_path):
+    from cutsealant.config import ConfigManager
+
+    config = ConfigManager()
+    path = tmp_path / "config" / "config.ini"
+    assert config.config_file == "config/config.ini"
+    assert path.is_file()
+    assert not (tmp_path / "config_v6.0.ini").exists()
+    config.config["DEVICE_SETTINGS"]["device"] = "test_device"
+    with path.open("w") as f:
+        config.config.write(f)
+    assert ConfigManager().get_device() == "test_device"
+
+
+def test_custom_nested_config_creates_parent_directories(tmp_path):
+    from cutsealant.config import ConfigManager
+
+    path = tmp_path / "custom" / "nested" / "settings.ini"
+    config = ConfigManager(path)
+    assert path.is_file()
+    assert config.get_classes() == {"carrier": 0, "sealant": 1}
 
 
 def test_json_and_error_log_contents(legacy, tmp_path):

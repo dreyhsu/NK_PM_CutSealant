@@ -50,7 +50,7 @@ This refactor preserves these rules. Production rules requiring four valid locat
 
 ## Install and run
 
-Python **3.12** is the development/test baseline. Run commands from the repository root: configuration and relative paths are resolved against the current working directory.
+Python **3.12** is the development/test baseline. The active configuration is [`config/config.ini`](config/config.ini). Run commands from the repository root: configuration and relative paths are resolved against the current working directory. Paths inside the INI remain relative to the repository root, not the `config/` folder. If the configuration is missing, the application creates the folder and a default INI file.
 
 ### Windows PowerShell
 
@@ -59,7 +59,7 @@ git clone https://github.com/dreyhsu/NK_PM_CutSealant.git
 cd NK_PM_CutSealant
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-# Edit config_v6.0.ini and supply the model/video or camera before starting.
+# Edit config/config.ini and supply the model/video or camera before starting.
 .\.venv\Scripts\python.exe main.py
 ```
 
@@ -68,7 +68,7 @@ py -3.12 -m venv .venv
 ```bash
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-# Edit config_v6.0.ini and supply the model/video before starting.
+# Edit config/config.ini and supply the model/video before starting.
 .venv/bin/python main.py
 ```
 

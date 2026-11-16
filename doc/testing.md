@@ -24,7 +24,7 @@ These IDs identify test groups; parameterized functions cover multiple cases. Pa
 | P0-K01 | **Known limitation:** only three passing detections can still Pass. | `test_inspection.py::test_missing_fourth_region_can_pass` |
 | P0-K02 | **Known limitation:** empty, missing-contour or exceptional crops are skipped; one large crop considers only its largest contour. | `test_inspection.py::test_unanalysed_region_is_skipped`, `test_large_box_analyses_only_largest_contour` |
 | P0-K03 | **Known limitation:** nonzero tower exit is console-only; buzzer exit ignored; USB child resets after writes and ignores command False. | `test_tower.py::test_nonzero_exit_only_printed`, `test_buzzer_failure_still_logs_ng`, `test_usb_child_preserves_reset_and_ignored_false` |
-| P1-01 | Configuration defaults, actual supplied settings and invalid numeric values. | `test_logs_config.py::test_config_defaults_and_supplied_ini`, `test_invalid_numeric_config_raises` |
+| P1-01 | Configuration defaults, supplied settings, invalid numeric values, versionless default location and automatic parent directory creation. | `test_logs_config.py::test_config_defaults_and_supplied_ini`, `test_invalid_numeric_config_raises`, `test_default_config_uses_versionless_config_folder`, `test_custom_nested_config_creates_parent_directories` |
 | P1-02 | Convexity classification and deterministic K-means clustering. This does not measure real-world accuracy. | `test_inspection.py::test_contour_decision`, `test_kmeans_uses_brightest_cluster_values` |
 | P1-03 | Initialize with injected model/camera; reject missing weights before device access; keep log writers disabled when configured. | `test_camera_detector.py::test_initialize_with_injected_model_camera_and_no_logs`, `test_missing_model_fails_before_loading_or_opening_camera` |
 | P1-04 | Verify USB/UVC failure, file selection and simulated TIS selection; reconnect releases the old capture and honors attempt limits. | `test_camera_detector.py::test_camera_setup_failure_and_invalid_mode`, `test_video_source_uses_configured_file`, `test_tis_source_uses_wrapper_without_loading_dll`, `test_reconnect_releases_old_capture_and_resets_on_success`, `test_reconnect_stops_after_limit` |
@@ -64,6 +64,8 @@ On 2026-11-16, using Python 3.12.14, pytest 9.2.0, NumPy 2.5.5, OpenCV 5.0.0 and
 - Structural comparison of all 36 extracted processor service methods: no statement changes after normalizing context names, injected dependencies and instance queues. Original independent class bodies are preserved.
 
 The listed versions describe the executed environment, not a claim of validation on every version allowed by the dependency manifests. Full Ultralytics/PyTorch runtime installation was not needed for this hardware-free run.
+
+After moving the active configuration to `config/config.ini`, the expanded suite has **83 passing cases**. The two additional cases verify the new default location, reloading saved settings, and creation of missing configuration directories. The historical baseline counts above describe the initial refactor verification.
 
 ## Manual acceptance: not verified by automated tests
 
