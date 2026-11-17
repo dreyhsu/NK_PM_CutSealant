@@ -36,19 +36,28 @@ def test_kmeans_uses_brightest_cluster_values(processor):
     assert np.array_equal(segmented, image)
 
 
-@pytest.mark.known_issue
-def test_missing_fourth_region_can_pass(processor, frame, detection, monkeypatch):
+def test_missing_fourth_region_is_ng(processor, frame, detection, monkeypatch):
     boxes, _, _ = detection
     monkeypatch.setattr(processor, "_loop_closed_identify", lambda _: True)
     frame[:] = 255
     cv2.setRNGSeed(42)
-    assert processor._cut_sealant_detection(frame, boxes[1:4]) is False
+    assert processor._cut_sealant_detection(frame, boxes[1:4]) is True
     assert len(processor.sealant_detection_results) == 3
 
 
-@pytest.mark.known_issue
+def test_extra_region_is_ng(processor, frame, detection, monkeypatch):
+    boxes, _, _ = detection
+    extra = np.array([[5, 5, 25, 25]], np.int32)
+    module_boxes = np.concatenate((boxes[1:], extra))
+    monkeypatch.setattr(processor, '_loop_closed_identify', lambda _: True)
+    frame[:] = 255
+    cv2.setRNGSeed(42)
+    assert processor._cut_sealant_detection(frame, module_boxes) is True
+    assert len(processor.sealant_detection_results) == 5
+
+
 @pytest.mark.parametrize("mode", ["empty", "no_contour", "exception"])
-def test_unanalysed_region_is_skipped(processor, frame, monkeypatch, mode):
+def test_unanalysed_region_is_ng(processor, frame, monkeypatch, mode):
     box = np.array([[0, 0, 20, 20]], np.int32)
     if mode == "empty":
         box[:] = 0
@@ -56,8 +65,8 @@ def test_unanalysed_region_is_skipped(processor, frame, monkeypatch, mode):
         monkeypatch.setattr(cv2, "findContours", lambda *a: ([], None))
     else:
         monkeypatch.setattr(processor, "_img_kmeans", Mock(side_effect=ValueError("bad crop")))
-    assert processor._cut_sealant_detection(frame, box) is False
-    assert processor.sealant_detection_results == {}
+    assert processor._cut_sealant_detection(frame, box) is True
+    assert list(processor.sealant_detection_results.values()) == [True]
 
 
 @pytest.mark.known_issue

@@ -6,7 +6,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class InspectionResult:
-    """Snapshot: True in by_box means NG; missing boxes retain legacy skip behavior."""
+    """Snapshot: True in by_box means NG; incomplete plates are also NG."""
     is_ng: bool
     by_box: dict[str, bool]
 
@@ -25,14 +25,16 @@ class SealantInspector:
     def _cut_sealant_detection(self, frame, boxes):
         """Detect if sealant is properly cut and store individual results"""
         ctx = self.context
-        if len(boxes) == 0:
-            return False
+        expected_count = ctx.detection_config.get('expected_module_count', 4)
 
         frame_hsl = cv2.cvtColor(frame, cv2.COLOR_BGR2HLS)
-        result_list = []
         ctx.sealant_detection_results = {}
 
         for idx, box in enumerate(boxes):
+            box_key = f"{box[0]}_{box[1]}_{box[2]}_{box[3]}"
+            # Invalid crops and missing contours must remain NG instead of being
+            # silently skipped as Pass.
+            ctx.sealant_detection_results[box_key] = True
             try:
                 crop_img = frame_hsl[box[1]:box[3], box[0]:box[2], :]
                 if crop_img.size == 0:
@@ -47,9 +49,6 @@ class SealantInspector:
                     cnt_area = [cv2.contourArea(cnt) for cnt in cnt_sealant]
                     sealant_idx = np.argmax(cnt_area)
                     closed_loop = ctx._loop_closed_identify(cnt_sealant[sealant_idx])
-                    result_list.append(closed_loop)
-
-                    box_key = f"{box[0]}_{box[1]}_{box[2]}_{box[3]}"
                     ctx.sealant_detection_results[box_key] = not closed_loop
 
             except Exception as e:
@@ -62,7 +61,11 @@ class SealantInspector:
                     })
                 continue
 
-        return any(item == False for item in result_list)
+        return (
+            len(boxes) != expected_count
+            or len(ctx.sealant_detection_results) != expected_count
+            or any(ctx.sealant_detection_results.values())
+        )
 
     def _loop_closed_identify(self, cnt):
         """Check if contour is a closed loop"""

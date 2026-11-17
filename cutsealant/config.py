@@ -54,6 +54,7 @@ class ConfigManager:
             'fps': '15',
             'stop_threshold_seconds': '0.95',
             'distance_threshold_pixels': '10',
+            'expected_module_count': '4',
             'kmeans_clusters': '3',
             'kmeans_rounds': '10',
             # Tolerance mechanism for detection box flickering
@@ -150,6 +151,8 @@ class ConfigManager:
             'fps': self.config.getint('DETECTION_SETTINGS', 'fps'),
             'stop_threshold_seconds': self.config.getfloat('DETECTION_SETTINGS', 'stop_threshold_seconds'),
             'distance_threshold_pixels': self.config.getint('DETECTION_SETTINGS', 'distance_threshold_pixels'),
+            'expected_module_count': self.config.getint(
+                'DETECTION_SETTINGS', 'expected_module_count', fallback=4),
             'kmeans_clusters': self.config.getint('DETECTION_SETTINGS', 'kmeans_clusters'),
             'kmeans_rounds': self.config.getint('DETECTION_SETTINGS', 'kmeans_rounds'),
             # Tolerance mechanism for detection box flickering

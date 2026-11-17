@@ -19,9 +19,9 @@ def test_five_step_workflow_completes_and_stays_visible_until_next_board():
     assert workflow.label('modules_detected') == '4 modules have been detected'
     assert workflow.status('inspecting') == 'CURRENT'
 
-    # A lower one-frame count must not make the displayed count move backwards.
+    # The OSD follows the current count so an obstruction is visible.
     workflow.update(True, 3, 'RESULT_HOLD')
-    assert workflow.module_count == 4
+    assert workflow.module_count == 3
     assert workflow.status('inspection_finished') == 'DONE'
     assert workflow.status('board_out') == 'CURRENT'
 
@@ -69,10 +69,40 @@ def test_workflow_panel_is_drawn_at_top_right(monkeypatch):
 
     monkeypatch.setattr(cv2, 'putText', capture_text)
     monkeypatch.setattr(cv2, 'rectangle', capture_rectangle)
-    display._draw_workflow_panel(frame)
+    display._draw_workflow_panel(frame, 'Standby')
 
     assert {'WORKFLOW', 'Board-In', '4 modules have been detected',
-            'Inspecting', 'Inspection Finished', 'Board-Out'} <= set(labels)
+            'Inspecting', 'Inspection Finished', 'Board-Out',
+            'LIGHT: STANDBY'} <= set(labels)
+    assert any(label.startswith('TIME ') for label in labels)
     panel_top_left, _ = rectangles[0]
     assert panel_top_left[0] > frame.shape[1] // 2
     assert panel_top_left[1] == 10
+
+
+def test_top_left_osd_is_removed(monkeypatch):
+    workflow = WorkflowPanelState()
+    context = SimpleNamespace(
+        workflow=SimpleNamespace(panel=workflow),
+        display_config={'show_crosshair': False, 'show_timestamp': True,
+                        'show_status': True},
+        detection_state='RESULT_HOLD',
+        detection_result='NG',
+        sealant_detection_results={'box': True},
+        last_light_status='NG',
+    )
+    display = Display(context)
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    labels = []
+
+    def capture_text(_frame, value, *_args, **_kwargs):
+        labels.append(value)
+        return _frame
+
+    monkeypatch.setattr(cv2, 'putText', capture_text)
+    display._add_ui_elements(frame, 'NG')
+
+    assert 'LIGHT: NG' in labels
+    assert not any(label.startswith(('Status:', 'State:', 'Result:', 'Broken:'))
+                   for label in labels)
+    assert 'All sealant OK' not in labels

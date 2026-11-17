@@ -12,7 +12,7 @@ YOLO finds a carrier and sealant boxes
 Carrier center is in the lower half of the image
 and its position stays stable for about one second
          |
-Analyze each detected sealant crop once
+Continuously analyze all four detected sealant crops while the board is present
          |
 Any evaluated crop fails? ---- Yes ---> NG: RED + buzzer
          |
@@ -20,7 +20,8 @@ Any evaluated crop fails? ---- Yes ---> NG: RED + buzzer
          |
     Pass: GREEN
          |
-Hold the result; optionally press M for manual review
+Keep the result live; red can change to green when all four modules pass
+Optionally press M for manual review
          |
 Carrier or sealant class disappears for at least 5 processed frames
 AND result has been held for at least 2 seconds
@@ -30,18 +31,18 @@ Save review records; return to YELLOW for the next carrier
 
 YOLO locates objects; it does **not** directly classify sealant quality in this program. For each crop, OpenCV groups lightness values into three clusters, selects the brightest cluster, finds its largest external contour, and tests the approximated contour for convexity. A failed evaluated contour makes the entire carrier NG.
 
-The one-second stability estimate uses processed frames divided by configured FPS. YOLO continues running during result hold, but quality analysis runs once per carrier cycle. Thresholds are configurable.
+The one-second stability estimate uses processed frames divided by configured FPS. YOLO and quality analysis continue while the carrier remains present, so a temporary red result caused by an obstruction can recover to green when all four modules are detected and pass together. Thresholds are configurable.
 
 ### Four inspection locations: current limitations
 
-There is no fixed four-region layout or completeness check:
+The application now requires exactly four detected regions for Pass, but it does not enforce fixed physical positions:
 
 | YOLO output | Current behavior |
 | --- | --- |
 | Four separate sealant boxes | Analyze each box; any evaluated failure makes the carrier NG. |
-| Three passing boxes | Can still produce Pass; a missing fourth box is not automatically NG. |
+| Three passing boxes | NG; all four configured module regions are required for Pass. |
 | One large box containing four sealants | Analyze only the largest contour within that crop, not four separate locations. |
-| Empty crop, missing contour or caught crop error | Skip the crop; it does not automatically fail the carrier. |
+| Empty crop, missing contour or caught crop error | NG; an unanalysed module cannot contribute to Pass. |
 | Carrier with no sealant class | Do not trigger a new inspection; after absence tolerance, return to/remain in standby. |
 
 The function historically named “closed loop” actually uses `cv2.isContourConvex()`. This is a shape heuristic, not a direct gap-width or continuity measurement. Sealant boxes are not filtered for containment inside the selected carrier. Review labels follow detector order, not fixed physical positions.

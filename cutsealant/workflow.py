@@ -40,9 +40,8 @@ class WorkflowPanelState:
         if board_present:
             self.cycle_started = True
             self.completed.add('board_in')
-            # Retain the highest count so a one-frame detector flicker does not
-            # make the displayed count move backwards.
-            self.module_count = max(self.module_count, module_count)
+            # Show the current count so a blocked module is visible in the OSD.
+            self.module_count = module_count
             if self.module_count:
                 self.completed.add('modules_detected')
 
@@ -135,8 +134,25 @@ class InspectionWorkflow:
         ctx.absent_frame_count = 0
 
         if ctx.detection_state == 'RESULT_HOLD':
-            # 🔑 KEY LOGIC: Already have detection result, maintain state
-            # No further detection, no light changes, just return current status
+            # The result remains live while the plate is present. A temporary
+            # obstruction can make it red, then all four passing modules turn it
+            # green without requiring a new board cycle.
+            sealant_result = ctx._cut_sealant_detection(raw_frame, sealant_boxes)
+            new_result = 'NG' if sealant_result else 'Pass'
+            ctx.current_sealant_result = sealant_result
+            if new_result != ctx.detection_result:
+                old_result = ctx.detection_result
+                ctx.detection_result = new_result
+                current_status = ctx._call_light_once(new_result)
+                self._update_review_snapshot(
+                    raw_frame, boxes, categories, sealant_boxes, scores)
+                print(f"Detection result updated: {old_result} → {new_result}")
+                if ctx.logger:
+                    ctx.logger.log_system_event('detection_result_updated', {
+                        'old_result': old_result,
+                        'new_result': new_result,
+                        'module_count': len(sealant_boxes),
+                    })
             return current_status, stop_time, previous_centroid
 
         elif ctx.detection_state == 'WAITING':
@@ -152,6 +168,38 @@ class InspectionWorkflow:
             return current_status, stop_time, previous_centroid
 
         return current_status, stop_time, previous_centroid
+
+    def _update_review_snapshot(self, raw_frame, boxes, categories, sealant_boxes, scores):
+        """Store the latest live result so Board-Out logs the final status."""
+        ctx = self.context
+        ctx.current_raw_frame = raw_frame.copy()
+        ctx.current_sealant_boxes = sealant_boxes.copy() if sealant_boxes else []
+        ctx.current_scores = {}
+        for box in sealant_boxes:
+            box_key = f"{box[0]}_{box[1]}_{box[2]}_{box[3]}"
+            for index, (detected_box, category) in enumerate(zip(boxes, categories)):
+                if (category == ctx.class_map.get('sealant', 1)
+                        and np.array_equal(detected_box, box)):
+                    ctx.current_scores[box_key] = (
+                        float(scores[index]) if index < len(scores) else 0.0)
+                    break
+
+        if ctx.pending_review is None:
+            return
+        ctx.pending_review['frame_number'] = ctx.frame_count
+        ctx.pending_review['user_reviewed'] = False
+        ctx.pending_review['sealants'] = []
+        for index, box in enumerate(sealant_boxes):
+            box_key = f"{box[0]}_{box[1]}_{box[2]}_{box[3]}"
+            is_broken = ctx.sealant_detection_results.get(box_key, True)
+            ctx.pending_review['sealants'].append({
+                'index': index,
+                'bbox': [int(box[0]), int(box[1]),
+                         int(box[2] - box[0]), int(box[3] - box[1])],
+                'ai_result': 'NG' if is_broken else 'Pass',
+                'confidence': ctx.current_scores.get(box_key, 0.0),
+                'user_agrees': True,
+            })
 
     def _handle_objects_absent(self, current_status, stop_time, previous_centroid):
         """Handle the case when carrier or sealant are not detected"""
@@ -279,7 +327,7 @@ class InspectionWorkflow:
                 if ctx.logger and not ctx.logger.detection_session_active:
                     ctx.logger.log_detection_session_start()
 
-                # 🔑 EXECUTE DETECTION ONLY ONCE
+                # Initial evaluation; RESULT_HOLD continues live evaluation.
                 sealant_result = ctx._cut_sealant_detection(raw_frame, sealant_boxes)
                 ctx.current_sealant_result = sealant_result
 
@@ -322,20 +370,6 @@ class InspectionWorkflow:
                 # === V6.0: Build pending_review data for rejudge log ===
                 ctx.carrier_count += 1
                 ctx.user_reviewed_flag = False  # Reset for new carrier
-                ctx.current_raw_frame = raw_frame.copy()
-                ctx.current_sealant_boxes = sealant_boxes.copy() if sealant_boxes else []
-
-                # Build confidence scores mapping
-                ctx.current_scores = {}
-                for i, box in enumerate(sealant_boxes):
-                    box_key = f"{box[0]}_{box[1]}_{box[2]}_{box[3]}"
-                    # Find corresponding score from YOLO detection
-                    # scores array corresponds to boxes array, need to find sealant indices
-                    for j, (b, cat) in enumerate(zip(boxes, categories)):
-                        if cat == ctx.class_map.get('sealant', 1):
-                            if np.array_equal(b, box):
-                                ctx.current_scores[box_key] = float(scores[j]) if j < len(scores) else 0.0
-                                break
 
                 # Build pending_review structure
                 ctx.pending_review = {
@@ -344,20 +378,8 @@ class InspectionWorkflow:
                     'user_reviewed': False,
                     'sealants': []
                 }
-
-                for i, box in enumerate(sealant_boxes):
-                    box_key = f"{box[0]}_{box[1]}_{box[2]}_{box[3]}"
-                    is_broken = ctx.sealant_detection_results.get(box_key, False)
-                    ai_result = 'NG' if is_broken else 'Pass'
-                    confidence = ctx.current_scores.get(box_key, 0.0)
-
-                    ctx.pending_review['sealants'].append({
-                        'index': i,
-                        'bbox': [int(box[0]), int(box[1]), int(box[2] - box[0]), int(box[3] - box[1])],
-                        'ai_result': ai_result,
-                        'confidence': confidence,
-                        'user_agrees': True  # Default: agree with AI
-                    })
+                self._update_review_snapshot(
+                    raw_frame, boxes, categories, sealant_boxes, scores)
 
                 print(f"[V6.0] Carrier #{ctx.carrier_count} pending review created with {len(ctx.pending_review['sealants'])} sealants")
 

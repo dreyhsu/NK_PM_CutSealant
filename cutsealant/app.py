@@ -405,17 +405,16 @@ class SafeVideoProcessor:
                         sealant_boxes = self._draw_detections(frame, boxes, categories, correct_carrier_box)
 
                 # === NEW: Enhanced detection logic with state machine ===
-                required_classes = set(self.class_map.values())
                 detected_classes = set(categories)
-                has_required_objects = required_classes.issubset(detected_classes)
                 board_present = self.class_map['carrier'] in detected_classes
                 module_count = sum(
                     1 for category in categories
                     if category == self.class_map['sealant']
                 )
 
-                if has_required_objects:
-                    # Objects are present - handle based on current state
+                if board_present:
+                    # Keep evaluating while the board remains present, even if
+                    # one or more module detections are temporarily blocked.
                     # V6.0: Pass scores for confidence tracking
                     current_status, stop_time, previous_centroid = self._handle_objects_present(
                         frame, raw_frame, boxes, categories, sealant_boxes, scores,

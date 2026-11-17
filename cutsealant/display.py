@@ -278,19 +278,72 @@ class Display:
         except Exception as e:
             print(f"Fullscreen toggle error: {e}")
 
-    def _draw_workflow_panel(self, frame):
-        """Draw the current five-step inspection workflow at the top right."""
+    def _draw_workflow_panel(self, frame, current_status=None):
+        """Draw tower/time information above the top-right workflow card."""
         workflow = self.context.workflow.panel
         height, width = frame.shape[:2]
         scale = max(0.40, min(2.0, width / 1920, height / 1080))
         panel_width = min(width - 20, max(180, round(570 * scale)))
         row_height = max(24, round(48 * scale))
         header_height = max(58, round(92 * scale))
+        status_height = max(42, round(58 * scale))
+        gap = max(5, round(8 * scale))
+        x = width - panel_width - 10
+        status_y = 10
+        y = status_y + status_height + gap
         panel_height = min(
-            height - 20,
+            max(0, height - y - 10),
             header_height + row_height * len(WORKFLOW_STEPS) + 8,
         )
-        x, y = width - panel_width - 10, 10
+
+        tower_status = (
+            getattr(self.context, 'last_light_status', None)
+            or current_status
+            or 'Unknown'
+        )
+        tower_color = {
+            'Standby': (0, 255, 255),
+            'Tracking': (255, 165, 0),
+            'Pass': (0, 255, 0),
+            'NG': (0, 0, 255),
+        }.get(tower_status, PANEL_WHITE)
+        now = datetime.now()
+
+        status_overlay = frame.copy()
+        cv2.rectangle(
+            status_overlay,
+            (x, status_y),
+            (x + panel_width, status_y + status_height),
+            PANEL_BG,
+            -1,
+        )
+        cv2.addWeighted(status_overlay, 0.90, frame, 0.10, 0, frame)
+
+        status_font = max(0.31, 0.60 * scale)
+        status_thickness = max(1, round(2 * scale))
+        status_baseline = status_y + max(27, round(38 * scale))
+        time_text = f"TIME {now.strftime('%H:%M:%S')}"
+        light_text = f'LIGHT: {str(tower_status).upper()}'
+        light_width = cv2.getTextSize(
+            light_text,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            status_font,
+            status_thickness,
+        )[0][0]
+        light_x = x + panel_width - light_width - max(13, round(16 * scale))
+        dot_x = light_x - max(13, round(18 * scale))
+        dot_y = status_y + status_height // 2
+        pulse = 1.0 - abs(2.0 * now.microsecond / 1_000_000.0 - 1.0)
+        dot_radius = max(3, round((5.0 + 2.0 * pulse) * scale))
+        cv2.circle(frame, (dot_x, dot_y), dot_radius + max(1, round(scale)),
+                   PANEL_BG, -1, cv2.LINE_AA)
+        cv2.circle(frame, (dot_x, dot_y), dot_radius, tower_color, -1, cv2.LINE_AA)
+        cv2.putText(frame, time_text, (x + max(13, round(16 * scale)), status_baseline),
+                    cv2.FONT_HERSHEY_SIMPLEX, status_font, PANEL_WHITE,
+                    status_thickness, cv2.LINE_AA)
+        cv2.putText(frame, light_text, (light_x, status_baseline),
+                    cv2.FONT_HERSHEY_SIMPLEX, status_font, tower_color,
+                    status_thickness, cv2.LINE_AA)
 
         overlay = frame.copy()
         cv2.rectangle(
@@ -373,41 +426,4 @@ class Display:
             cv2.line(frame, (w//2-20, h//2), (w//2+20, h//2), (255, 255, 255), 1)
             cv2.line(frame, (w//2, h//2-20), (w//2, h//2+20), (255, 255, 255), 1)
 
-        # Add timestamp if enabled
-        if ctx.display_config.get('show_timestamp', True):
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            cv2.putText(frame, timestamp, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
-
-        # Add status if enabled
-        if ctx.display_config.get('show_status', True):
-            status_text = f"Status: {current_status}"
-            cv2.putText(frame, status_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
-
-        # === NEW: Add detection state information ===
-        state_text = f"State: {ctx.detection_state}"
-        state_color = {
-            'WAITING': (0, 255, 255),      # Yellow
-            'DETECTED': (255, 165, 0),     # Orange
-            'RESULT_HOLD': (0, 255, 0) if ctx.detection_result == 'Pass' else (0, 0, 255)  # Green/Red
-        }.get(ctx.detection_state, (255, 255, 255))
-
-        cv2.putText(frame, state_text, (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.5, state_color, 3, cv2.LINE_AA)
-
-        # Show detection result if available
-        if ctx.detection_result:
-            result_text = f"Result: {ctx.detection_result}"
-            result_color = (0, 255, 0) if ctx.detection_result == 'Pass' else (0, 0, 255)
-            cv2.putText(frame, result_text, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 1.5, result_color, 3, cv2.LINE_AA)
-
-        # Add sealant detection results if available
-        if ctx.detection_state == 'RESULT_HOLD' and ctx.sealant_detection_results:
-            broken_count = sum(1 for is_broken in ctx.sealant_detection_results.values() if is_broken)
-            total_count = len(ctx.sealant_detection_results)
-
-            if broken_count > 0:
-                status_text = f"Broken: {broken_count}/{total_count}"
-                cv2.putText(frame, status_text, (10, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3, cv2.LINE_AA)
-            else:
-                cv2.putText(frame, "All sealant OK", (10, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3, cv2.LINE_AA)
-
-        self._draw_workflow_panel(frame)
+        self._draw_workflow_panel(frame, current_status)

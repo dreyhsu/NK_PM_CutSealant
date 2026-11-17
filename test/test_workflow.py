@@ -6,7 +6,7 @@ import pytest
 
 
 @pytest.mark.parametrize("broken,expected", [(False, "Pass"), (True, "NG")])
-def test_trigger_boundary_and_one_inspection(processor, frame, detection, monkeypatch, broken, expected):
+def test_trigger_boundary_and_live_inspection(processor, frame, detection, monkeypatch, broken, expected):
     boxes, categories, scores = detection
     monkeypatch.setattr(processor, "_cut_sealant_detection", Mock(return_value=broken))
     monkeypatch.setattr(processor, "_call_light_once", Mock(side_effect=lambda s: s))
@@ -24,8 +24,29 @@ def test_trigger_boundary_and_one_inspection(processor, frame, detection, monkey
     assert len(processor.pending_review["sealants"]) == 4
     assert processor.current_raw_frame is not frame
     processor._handle_objects_present(*args, *result)
-    processor._cut_sealant_detection.assert_called_once()
+    assert processor._cut_sealant_detection.call_count == 2
     processor.statistics_logger.log_detection.assert_called_once()
+
+
+def test_red_result_can_recover_to_green_without_board_out(processor, frame, detection,
+                                                           monkeypatch):
+    boxes, categories, scores = detection
+    inspect = Mock(side_effect=[True, False])
+    light = Mock(side_effect=lambda status: status)
+    monkeypatch.setattr(processor, '_cut_sealant_detection', inspect)
+    monkeypatch.setattr(processor, '_call_light_once', light)
+    monkeypatch.setattr(processor, '_save_img_data', Mock())
+    args = (frame, frame.copy(), boxes, categories, list(boxes[1:]), scores)
+
+    result = processor._handle_objects_present(*args, 'Standby', 15, [100, 150])
+    assert processor.detection_result == 'NG'
+    assert result[0] == 'NG'
+
+    result = processor._handle_objects_present(*args, *result)
+    assert processor.detection_state == 'RESULT_HOLD'
+    assert processor.detection_result == 'Pass'
+    assert result[0] == 'Pass'
+    assert [call.args[0] for call in light.call_args_list] == ['NG', 'Pass']
 
 
 @pytest.mark.parametrize("previous,carrier", [([0, 0], [10, 110, 190, 190]), ([100, 50], [10, 10, 190, 90])])
