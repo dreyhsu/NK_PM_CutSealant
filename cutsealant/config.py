@@ -75,6 +75,10 @@ class ConfigManager:
             'device': 'cpu'
         }
 
+        self.config['LIGHT_TOWER'] = {
+            'mode': 'usb'
+        }
+
         self.config['CLASSES'] = {
             'carrier': '0',
             'sealant': '1'
@@ -168,6 +172,17 @@ class ConfigManager:
     def get_device(self):
         """Get device configuration"""
         return self.config.get('DEVICE_SETTINGS', 'device')
+
+    def get_light_tower_config(self):
+        """Get light tower configuration.
+
+        ``usb`` keeps the physical PATLITE behavior. ``mock`` only reports
+        requested statuses in the terminal, without launching the USB helper.
+        The fallback preserves compatibility with existing configuration files.
+        """
+        return {
+            'mode': self.config.get('LIGHT_TOWER', 'mode', fallback='usb').strip().lower()
+        }
 
     def get_classes(self):
         """Get class configuration"""

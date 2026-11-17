@@ -32,6 +32,13 @@ class TowerController:
             'NG': ['2', '1', '0', '0', '0', '0']
         }
 
+        mode = ctx.light_tower_config.get('mode', 'usb')
+        if mode == 'mock':
+            print(f'[Mock light tower] Status: {status}')
+            if ctx.logger:
+                ctx.logger.log_system_event("status_change", {"new_status": status})
+            return status
+
         try:
             if status in commands:
                 result = ctx.command_runner(['python', ctx.paths['stack_light_path']] + commands[status])

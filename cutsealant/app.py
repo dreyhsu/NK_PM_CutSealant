@@ -92,6 +92,7 @@ class SafeVideoProcessor:
         self.detection_config = {}
         self.display_config = {}
         self.device = 'cpu'
+        self.light_tower_config = {'mode': 'usb'}
         self.class_map = {}
         self.recording_config = {}
 
@@ -165,6 +166,7 @@ class SafeVideoProcessor:
             self.detection_config = self.config_manager.get_detection_config()
             self.display_config = self.config_manager.get_display_config()
             self.device = self.config_manager.get_device()
+            self.light_tower_config = self.config_manager.get_light_tower_config()
             self.class_map = self.config_manager.get_classes()
             self.recording_config = self.config_manager.get_recording_config()
 
@@ -183,6 +185,7 @@ class SafeVideoProcessor:
                     "detection_config": self.detection_config,
                     "display_config": self.display_config,
                     "device": self.device,
+                    "light_tower_config": self.light_tower_config,
                     "classes": self.class_map,
                     "recording_config": self.recording_config
                 }

@@ -14,6 +14,15 @@ def test_config_defaults_and_supplied_ini(legacy, tmp_path):
     assert supplied.get_device() == "mps"
     assert supplied.get_detection_config()["absent_tolerance_frames"] == 5
     assert supplied.get_rejudge_config()["review_window_padding"] == 50
+    assert supplied.get_light_tower_config() == {"mode": "mock"}
+
+
+def test_light_tower_config_defaults_to_usb_for_older_ini(tmp_path):
+    from cutsealant.config import ConfigManager
+
+    path = tmp_path / "older.ini"
+    path.write_text("[DEVICE_SETTINGS]\ndevice = cpu\n")
+    assert ConfigManager(path).get_light_tower_config() == {"mode": "usb"}
 
 
 def test_invalid_numeric_config_raises(legacy, tmp_path):

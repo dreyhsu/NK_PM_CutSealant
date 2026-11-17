@@ -32,6 +32,20 @@ def test_launch_exception_logged_and_cache_not_updated(processor, monkeypatch):
     assert processor.logger.log_error.call_args.args[0] == "light_control_error"
 
 
+@pytest.mark.parametrize("status", ["Standby", "Tracking", "Pass", "NG"])
+def test_mock_tower_prints_status_without_usb_command(processor, capsys, status):
+    processor.light_tower_config = {"mode": "mock"}
+    processor.command_runner = Mock(side_effect=AssertionError("USB command must not run"))
+
+    assert processor._call_light_once(status) == status
+    assert processor.last_light_status == status
+    assert f"[Mock light tower] Status: {status}" in capsys.readouterr().out
+    processor.command_runner.assert_not_called()
+    processor.logger.log_system_event.assert_called_once_with(
+        "status_change", {"new_status": status}
+    )
+
+
 @pytest.mark.known_issue
 def test_nonzero_exit_only_printed(processor, monkeypatch, capsys):
     monkeypatch.setattr(subprocess, "call", Mock(return_value=1))
