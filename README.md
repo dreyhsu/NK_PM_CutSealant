@@ -91,7 +91,7 @@ python yoloVideoMain_V6.0.7.py
 3. Replace the original developer's absolute model/video paths. For example, use `./models/yolo11s_20251223.pt` and your own video path.
 4. Select `[DEVICE_SETTINGS] device` for the host. The checked-in configuration uses `mps` for the original Mac. For a CPU configuration, use `cpu` and set `[YOLO_SETTINGS] use_half_precision = false`. CUDA requires an appropriate local PyTorch/CUDA installation.
 5. TIS industrial-camera mode requires the matching vendor camera software and x64 DLLs, including the configured `tisgrabber_x64.dll`, installed locally. These binaries are excluded from Git. General camera mode currently uses OpenCV DirectShow, so its existing implementation targets Windows.
-6. PATLITE control requires PyUSB and the appropriate working USB backend/driver setup for the Windows installation. Preserve a known-working driver setup; installing Python packages alone does not establish it. The existing child command launches `python LR6main.py`, so `python` on `PATH` must refer to the intended environment. Activate the environment when using the tower:
+6. Set `[LIGHT_TOWER] mode = mock` to print each requested tower status in the terminal without accessing USB. Set `mode = usb` to control the physical PATLITE; this requires PyUSB and the appropriate working USB backend/driver setup for the Windows installation. Preserve a known-working driver setup; installing Python packages alone does not establish it. The USB mode launches `python LR6main.py`, so `python` on `PATH` must refer to the intended environment. Activate the environment when using the physical tower:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -187,3 +187,5 @@ The original 38 characterization cases pass against both the committed monolith 
 - Shutdown does not explicitly turn the tower off.
 
 These are documented investigation points, not proof of the cause of the reported Windows freeze. USB reliability fixes and four-location completeness rules are separate work.
+
+See [pending light tower modifications](doc/light_tower_pending_changes.md) for a simple explanation, prioritized work items and verification checklists. Those changes have not been implemented.
