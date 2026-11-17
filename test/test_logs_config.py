@@ -2,6 +2,7 @@ import csv
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 
@@ -70,6 +71,41 @@ def test_json_and_error_log_contents(legacy, tmp_path):
         result = next(r for r in rows if r["log_type"] == "detection_result")
         assert result["summary"] == {"total_sealants": 4, "ok_count": 3, "ng_count": 1, "overall_result": "NG"}
         assert "simulated" in path.with_name("detection_errors.log").read_text()
+    finally:
+        for handler in logger.logger.handlers[:]:
+            handler.close()
+            logger.logger.removeHandler(handler)
+
+
+def test_json_logger_serializes_numpy_values(legacy, tmp_path):
+    path = tmp_path / "logs" / "detection.log"
+    logger = legacy.JSONLogger(str(path))
+    try:
+        logger.log_detection_result(
+            np.int32(4),
+            np.int64(3),
+            np.int32(1),
+            [{"is_broken": np.bool_(True), "score": np.float32(0.75)}],
+            {
+                "carrier_centroid": [np.int32(120), np.int32(340)],
+                "box": np.array([1, 2, 3, 4], dtype=np.int32),
+            },
+        )
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        result = next(row for row in rows if row["log_type"] == "detection_result")
+        assert result["summary"] == {
+            "total_sealants": 4,
+            "ok_count": 3,
+            "ng_count": 1,
+            "overall_result": "NG",
+        }
+        assert result["detection_details"] == [
+            {"is_broken": True, "score": 0.75}
+        ]
+        assert result["frame_info"] == {
+            "carrier_centroid": [120, 340],
+            "box": [1, 2, 3, 4],
+        }
     finally:
         for handler in logger.logger.handlers[:]:
             handler.close()

@@ -67,11 +67,29 @@ class JSONLogger:
     def _write_json_log(self, log_entry):
         """Write JSON log entry to file"""
         try:
+            # NumPy values can enter logs through detector boxes, centroids and
+            # OpenCV results. Convert them at the logging boundary so callers do
+            # not each need to know which values are NumPy-backed.
+            line = json.dumps(
+                log_entry,
+                ensure_ascii=False,
+                default=self._json_default
+            )
             with open(self.log_file_path, 'a', encoding='utf-8') as f:
-                json.dump(log_entry, f, ensure_ascii=False)
-                f.write('\n')
+                f.write(line + '\n')
         except Exception as e:
             self.logger.error(f"Failed to write JSON log: {e}")
+
+    @staticmethod
+    def _json_default(value):
+        """Convert NumPy-compatible values to JSON-native Python values."""
+        if hasattr(value, 'tolist'):
+            return value.tolist()
+        if hasattr(value, 'item'):
+            return value.item()
+        raise TypeError(
+            f"Object of type {type(value).__name__} is not JSON serializable"
+        )
 
     def log_system_event(self, event_type, data=None):
         """Log system events (startup, shutdown, errors)"""
