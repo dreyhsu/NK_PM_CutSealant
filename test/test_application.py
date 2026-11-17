@@ -70,6 +70,28 @@ def test_main_loop_standby_quit_and_cleanup(processor, frame, monkeypatch):
     processor.cap.release.assert_called_once()
 
 
+def test_board_in_changes_static_yellow_to_tracking_blink(processor, frame, detection,
+                                                          monkeypatch):
+    boxes, categories, scores = detection
+    monkeypatch.setattr(processor, 'initialize', Mock(return_value=True))
+    monkeypatch.setattr(processor, 'start_threads', Mock())
+    processor.display_config = {'window_name': 'fake'}
+    processor.config_manager = Mock()
+    processor.config_manager.get_video_source_config.return_value = {'mode': 'video'}
+    processor.recording_config = {'record_type': 'raw'}
+    processor.result_queue.put((frame, boxes, scores, categories))
+    processor.cap = Mock()
+    send = Mock(return_value=0)
+    processor.command_runner = send
+    monkeypatch.setattr(cv2, 'waitKey', lambda _: ord('q'))
+
+    assert processor.run() is True
+    assert [call.args[0][2:] for call in send.call_args_list] == [
+        ['2', '0', '1', '0', '0', '0'],
+        ['2', '0', '2', '0', '0', '0'],
+    ]
+
+
 def test_two_carrier_sequence_pass_then_ng(processor, frame, detection, monkeypatch):
     boxes, categories, scores = detection
     send = Mock(return_value=0)

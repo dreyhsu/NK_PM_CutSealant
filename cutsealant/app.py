@@ -413,6 +413,12 @@ class SafeVideoProcessor:
                 )
 
                 if board_present:
+                    board_arriving = (
+                        not self.workflow.panel.cycle_started
+                        or self.workflow.panel.complete
+                    )
+                    if board_arriving:
+                        current_status = self._call_light_once('Tracking')
                     # Keep evaluating while the board remains present, even if
                     # one or more module detections are temporarily blocked.
                     # V6.0: Pass scores for confidence tracking

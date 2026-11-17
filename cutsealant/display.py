@@ -303,7 +303,7 @@ class Display:
         )
         tower_color = {
             'Standby': (0, 255, 255),
-            'Tracking': (255, 165, 0),
+            'Tracking': (0, 255, 255),
             'Pass': (0, 255, 0),
             'NG': (0, 0, 255),
         }.get(tower_status, PANEL_WHITE)
@@ -323,7 +323,11 @@ class Display:
         status_thickness = max(1, round(2 * scale))
         status_baseline = status_y + max(27, round(38 * scale))
         time_text = f"TIME {now.strftime('%H:%M:%S')}"
-        light_text = f'LIGHT: {str(tower_status).upper()}'
+        light_mode = {
+            'Standby': ' (STATIC)',
+            'Tracking': ' (BLINK)',
+        }.get(tower_status, '')
+        light_text = f'LIGHT: {str(tower_status).upper()}{light_mode}'
         light_width = cv2.getTextSize(
             light_text,
             cv2.FONT_HERSHEY_SIMPLEX,
@@ -334,10 +338,14 @@ class Display:
         dot_x = light_x - max(13, round(18 * scale))
         dot_y = status_y + status_height // 2
         pulse = 1.0 - abs(2.0 * now.microsecond / 1_000_000.0 - 1.0)
-        dot_radius = max(3, round((5.0 + 2.0 * pulse) * scale))
+        dot_radius = max(3, round(6.0 * scale))
+        dot_color = tower_color
+        if tower_status == 'Tracking':
+            brightness = 0.15 + 0.85 * pulse
+            dot_color = tuple(round(channel * brightness) for channel in tower_color)
         cv2.circle(frame, (dot_x, dot_y), dot_radius + max(1, round(scale)),
                    PANEL_BG, -1, cv2.LINE_AA)
-        cv2.circle(frame, (dot_x, dot_y), dot_radius, tower_color, -1, cv2.LINE_AA)
+        cv2.circle(frame, (dot_x, dot_y), dot_radius, dot_color, -1, cv2.LINE_AA)
         cv2.putText(frame, time_text, (x + max(13, round(16 * scale)), status_baseline),
                     cv2.FONT_HERSHEY_SIMPLEX, status_font, PANEL_WHITE,
                     status_thickness, cv2.LINE_AA)
