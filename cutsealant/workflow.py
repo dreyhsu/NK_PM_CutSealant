@@ -6,9 +6,7 @@ import numpy as np
 
 WORKFLOW_STEPS = (
     'board_in',
-    'modules_detected',
-    'inspecting',
-    'inspection_finished',
+    'inspecting_modules',
     'board_out',
 )
 
@@ -21,6 +19,7 @@ class WorkflowPanelState:
     module_count: int = 0
     cycle_started: bool = False
     cycle_complete: bool = False
+    inspection_started: bool = False
 
     def reset(self):
         """Prepare the panel for a board that has not arrived yet."""
@@ -28,6 +27,7 @@ class WorkflowPanelState:
         self.module_count = 0
         self.cycle_started = False
         self.cycle_complete = False
+        self.inspection_started = False
 
     def update(self, board_present, module_count, detection_state, board_released=False):
         """Advance the display state from observations made for the current frame."""
@@ -42,15 +42,13 @@ class WorkflowPanelState:
             self.completed.add('board_in')
             # Show the current count so a blocked module is visible in the OSD.
             self.module_count = module_count
-            if self.module_count:
-                self.completed.add('modules_detected')
 
         if detection_state == 'RESULT_HOLD' and self.cycle_started:
-            self.completed.update(('inspecting', 'inspection_finished'))
+            self.inspection_started = True
 
         if board_released:
-            if 'inspection_finished' in self.completed:
-                self.completed.add('board_out')
+            if self.inspection_started:
+                self.completed.update(('inspecting_modules', 'board_out'))
                 self.cycle_complete = True
             else:
                 # An incomplete board departure is not a completed cycle.
@@ -74,9 +72,7 @@ class WorkflowPanelState:
     def label(self, step):
         labels = {
             'board_in': 'Board-In',
-            'modules_detected': f'{self.module_count} modules have been detected',
-            'inspecting': 'Inspecting',
-            'inspection_finished': 'Inspection Finished',
+            'inspecting_modules': f'Inspecting {self.module_count} modules',
             'board_out': 'Board-Out',
         }
         return labels.get(step, '')

@@ -13,17 +13,17 @@ def test_five_step_workflow_completes_and_stays_visible_until_next_board():
     assert workflow.status('board_in') == 'CURRENT'
     workflow.update(True, 0, 'WAITING')
     assert workflow.status('board_in') == 'DONE'
-    assert workflow.status('modules_detected') == 'CURRENT'
+    assert workflow.status('inspecting_modules') == 'CURRENT'
 
     workflow.update(True, 4, 'WAITING')
-    assert workflow.label('modules_detected') == '4 modules have been detected'
-    assert workflow.status('inspecting') == 'CURRENT'
+    assert workflow.label('inspecting_modules') == 'Inspecting 4 modules'
+    assert workflow.status('inspecting_modules') == 'CURRENT'
 
     # The OSD follows the current count so an obstruction is visible.
     workflow.update(True, 3, 'RESULT_HOLD')
     assert workflow.module_count == 3
-    assert workflow.status('inspection_finished') == 'DONE'
-    assert workflow.status('board_out') == 'CURRENT'
+    assert workflow.status('inspecting_modules') == 'CURRENT'
+    assert workflow.status('board_out') == 'PENDING'
 
     workflow.update(False, 0, 'WAITING', board_released=True)
     assert workflow.complete is True
@@ -36,8 +36,7 @@ def test_five_step_workflow_completes_and_stays_visible_until_next_board():
     workflow.update(True, 2, 'WAITING')
     assert workflow.complete is False
     assert workflow.module_count == 2
-    assert workflow.status('modules_detected') == 'DONE'
-    assert workflow.status('inspecting') == 'CURRENT'
+    assert workflow.status('inspecting_modules') == 'CURRENT'
 
 
 def test_incomplete_board_departure_resets_cycle():
@@ -71,8 +70,7 @@ def test_workflow_panel_is_drawn_at_top_right(monkeypatch):
     monkeypatch.setattr(cv2, 'rectangle', capture_rectangle)
     display._draw_workflow_panel(frame, 'Standby')
 
-    assert {'WORKFLOW', 'Board-In', '4 modules have been detected',
-            'Inspecting', 'Inspection Finished', 'Board-Out',
+    assert {'WORKFLOW', 'Board-In', 'Inspecting 4 modules', 'Board-Out',
             'LIGHT: STANDBY (STATIC)'} <= set(labels)
     assert any(label.startswith('TIME ') for label in labels)
     panel_top_left, _ = rectangles[0]
