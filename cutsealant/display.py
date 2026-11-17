@@ -6,6 +6,14 @@ from datetime import datetime
 import cv2
 import numpy as np
 
+from .workflow import WORKFLOW_STEPS
+
+PANEL_BG = (9, 15, 26)
+PANEL_WHITE = (255, 242, 235)
+PANEL_MUTED = (189, 163, 145)
+PANEL_GREEN = (138, 212, 54)
+PANEL_AMBER = (84, 196, 245)
+
 class Display:
     """Composed service; context supplies shared application interfaces."""
 
@@ -270,6 +278,91 @@ class Display:
         except Exception as e:
             print(f"Fullscreen toggle error: {e}")
 
+    def _draw_workflow_panel(self, frame):
+        """Draw the current five-step inspection workflow at the top right."""
+        workflow = self.context.workflow.panel
+        height, width = frame.shape[:2]
+        scale = max(0.40, min(2.0, width / 1920, height / 1080))
+        panel_width = min(width - 20, max(180, round(570 * scale)))
+        row_height = max(24, round(48 * scale))
+        header_height = max(58, round(92 * scale))
+        panel_height = min(
+            height - 20,
+            header_height + row_height * len(WORKFLOW_STEPS) + 8,
+        )
+        x, y = width - panel_width - 10, 10
+
+        overlay = frame.copy()
+        cv2.rectangle(
+            overlay,
+            (x, y),
+            (x + panel_width, y + panel_height),
+            PANEL_BG,
+            -1,
+        )
+        cv2.addWeighted(overlay, 0.90, frame, 0.10, 0, frame)
+
+        font_scale = max(0.32, 0.68 * scale)
+        thickness = max(1, round(2 * scale))
+
+        def text(value, tx, ty, color=PANEL_WHITE, size=font_scale):
+            cv2.putText(
+                frame,
+                value,
+                (int(tx), int(ty)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                size,
+                color,
+                thickness,
+                cv2.LINE_AA,
+            )
+
+        phase_color = PANEL_GREEN if workflow.complete else PANEL_AMBER
+        cv2.rectangle(
+            frame,
+            (x, y),
+            (x + max(3, round(5 * scale)), y + panel_height),
+            phase_color,
+            -1,
+        )
+        text('WORKFLOW', x + 14, y + max(21, round(35 * scale)))
+        progress = f'{workflow.completed_count} / {len(WORKFLOW_STEPS)}'
+        progress_width = cv2.getTextSize(
+            progress,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            thickness,
+        )[0][0]
+        text(progress, x + panel_width - progress_width - 14,
+             y + max(21, round(35 * scale)), phase_color)
+        text(workflow.phase, x + 14, y + max(45, round(70 * scale)),
+             phase_color, max(0.30, 0.59 * scale))
+
+        rows_y = y + header_height
+        for index, step in enumerate(WORKFLOW_STEPS):
+            top = rows_y + index * row_height
+            if top + row_height > y + panel_height:
+                break
+            status = workflow.status(step)
+            color = (PANEL_GREEN if status == 'DONE'
+                     else PANEL_AMBER if status == 'CURRENT'
+                     else PANEL_MUTED)
+            if status == 'CURRENT':
+                row_overlay = frame.copy()
+                cv2.rectangle(
+                    row_overlay,
+                    (x + 7, top),
+                    (x + panel_width - 7, top + row_height),
+                    (26, 43, 51),
+                    -1,
+                )
+                cv2.addWeighted(row_overlay, 0.90, frame, 0.10, 0, frame)
+            baseline = top + max(18, round(32 * scale))
+            marker = 'OK' if status == 'DONE' else f'{index + 1:02}'
+            text(marker, x + 14, baseline, color, max(0.30, 0.59 * scale))
+            text(workflow.label(step), x + max(49, round(75 * scale)), baseline,
+                 color, max(0.29, 0.56 * scale))
+
     def _add_ui_elements(self, frame, current_status):
         """Add UI elements to frame"""
         ctx = self.context
@@ -316,3 +409,5 @@ class Display:
                 cv2.putText(frame, status_text, (10, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3, cv2.LINE_AA)
             else:
                 cv2.putText(frame, "All sealant OK", (10, 220), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3, cv2.LINE_AA)
+
+        self._draw_workflow_panel(frame)

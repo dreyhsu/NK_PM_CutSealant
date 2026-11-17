@@ -298,6 +298,7 @@ class SafeVideoProcessor:
             # === NEW: Initialize detection state machine ===
             self.detection_state = 'WAITING'
             self.detection_result = None
+            self.workflow.panel.reset()
             current_status = self._call_light_once('Standby')
 
             # Reset sealant detection state
@@ -397,25 +398,21 @@ class SafeVideoProcessor:
                 raw_frame = frame.copy()
                 sealant_boxes = []
 
-                self._add_ui_elements(frame, current_status)
-
                 # Process detections
                 if len(categories) > 0 and self.class_map['carrier'] in categories:
                     correct_carrier_box = self._check_correct_carrier(categories, boxes)
                     if correct_carrier_box is not None:
                         sealant_boxes = self._draw_detections(frame, boxes, categories, correct_carrier_box)
 
-                # Record video based on configuration
-                if self.video_recorder and self.video_recorder.is_recording:
-                    if self.recording_config['record_type'] == 'raw':
-                        self.video_recorder.record_frame(raw_frame)
-                    else:  # 'inference'
-                        self.video_recorder.record_frame(frame)
-
                 # === NEW: Enhanced detection logic with state machine ===
                 required_classes = set(self.class_map.values())
                 detected_classes = set(categories)
                 has_required_objects = required_classes.issubset(detected_classes)
+                board_present = self.class_map['carrier'] in detected_classes
+                module_count = sum(
+                    1 for category in categories
+                    if category == self.class_map['sealant']
+                )
 
                 if has_required_objects:
                     # Objects are present - handle based on current state
@@ -429,6 +426,25 @@ class SafeVideoProcessor:
                     current_status, stop_time, previous_centroid = self._handle_objects_absent(
                         current_status, stop_time, previous_centroid
                     )
+
+                board_released = (
+                    not board_present
+                    and self.absent_frame_count
+                    >= self.detection_config.get('absent_tolerance_frames', 5)
+                )
+                self.workflow.update_panel(
+                    board_present,
+                    module_count,
+                    board_released,
+                )
+                self._add_ui_elements(frame, current_status)
+
+                # Record after all inference annotations, including workflow.
+                if self.video_recorder and self.video_recorder.is_recording:
+                    if self.recording_config['record_type'] == 'raw':
+                        self.video_recorder.record_frame(raw_frame)
+                    else:  # 'inference'
+                        self.video_recorder.record_frame(frame)
 
                 # V6.0: Update manual review window if open
                 if self.manual_review_window and self.manual_review_window.is_open:

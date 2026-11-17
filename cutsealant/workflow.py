@@ -4,6 +4,91 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+WORKFLOW_STEPS = (
+    'board_in',
+    'modules_detected',
+    'inspecting',
+    'inspection_finished',
+    'board_out',
+)
+
+
+@dataclass
+class WorkflowPanelState:
+    """Persistent five-step cycle shown on every displayed frame."""
+
+    completed: set = field(default_factory=set)
+    module_count: int = 0
+    cycle_started: bool = False
+    cycle_complete: bool = False
+
+    def reset(self):
+        """Prepare the panel for a board that has not arrived yet."""
+        self.completed.clear()
+        self.module_count = 0
+        self.cycle_started = False
+        self.cycle_complete = False
+
+    def update(self, board_present, module_count, detection_state, board_released=False):
+        """Advance the display state from observations made for the current frame."""
+        module_count = max(0, int(module_count))
+
+        # Keep a completed cycle on screen until the next board starts a new one.
+        if board_present and self.cycle_complete:
+            self.reset()
+
+        if board_present:
+            self.cycle_started = True
+            self.completed.add('board_in')
+            # Retain the highest count so a one-frame detector flicker does not
+            # make the displayed count move backwards.
+            self.module_count = max(self.module_count, module_count)
+            if self.module_count:
+                self.completed.add('modules_detected')
+
+        if detection_state == 'RESULT_HOLD' and self.cycle_started:
+            self.completed.update(('inspecting', 'inspection_finished'))
+
+        if board_released:
+            if 'inspection_finished' in self.completed:
+                self.completed.add('board_out')
+                self.cycle_complete = True
+            else:
+                # An incomplete board departure is not a completed cycle.
+                self.reset()
+
+    @property
+    def completed_count(self):
+        return len(self.completed)
+
+    @property
+    def complete(self):
+        return self.cycle_complete
+
+    @property
+    def phase(self):
+        if self.complete:
+            return 'Cycle complete'
+        current = next((step for step in WORKFLOW_STEPS if step not in self.completed), None)
+        return self.label(current) if current else 'Cycle complete'
+
+    def label(self, step):
+        labels = {
+            'board_in': 'Board-In',
+            'modules_detected': f'{self.module_count} modules have been detected',
+            'inspecting': 'Inspecting',
+            'inspection_finished': 'Inspection Finished',
+            'board_out': 'Board-Out',
+        }
+        return labels.get(step, '')
+
+    def status(self, step):
+        if step in self.completed:
+            return 'DONE'
+        current = next((name for name in WORKFLOW_STEPS if name not in self.completed), None)
+        return 'CURRENT' if step == current else 'PENDING'
+
+
 @dataclass
 class InspectionState:
     """Carrier state, changed by the main/UI thread only."""
@@ -30,6 +115,16 @@ class InspectionWorkflow:
     def __init__(self, context):
         self.context = context
         self.state = InspectionState()
+        self.panel = WorkflowPanelState()
+
+    def update_panel(self, board_present, module_count, board_released=False):
+        """Update the persistent overlay model after processing a frame."""
+        self.panel.update(
+            board_present,
+            module_count,
+            self.context.detection_state,
+            board_released,
+        )
 
     def _handle_objects_present(self, frame, raw_frame, boxes, categories, sealant_boxes, scores,
                                current_status, stop_time, previous_centroid):
