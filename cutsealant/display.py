@@ -286,7 +286,7 @@ class Display:
         panel_width = min(width - 20, max(180, round(570 * scale)))
         row_height = max(24, round(48 * scale))
         header_height = max(58, round(92 * scale))
-        status_height = max(42, round(58 * scale))
+        status_height = max(62, round(88 * scale))
         gap = max(5, round(8 * scale))
         x = width - panel_width - 10
         status_y = 10
@@ -297,8 +297,8 @@ class Display:
         )
 
         tower_status = (
-            getattr(self.context, 'last_light_status', None)
-            or current_status
+            current_status
+            or getattr(self.context, 'last_light_status', None)
             or 'Unknown'
         )
         tower_color = {
@@ -327,7 +327,11 @@ class Display:
             'Standby': ' (STATIC)',
             'Tracking': ' (BLINK)',
         }.get(tower_status, '')
-        light_text = f'LIGHT: {str(tower_status).upper()}{light_mode}'
+        tower = getattr(self.context, 'tower', None)
+        health = getattr(tower, 'health', 'unknown')
+        light_text = f'REQUEST: {str(tower_status).upper()}{light_mode}'
+        status_font = min(status_font, (panel_width - 30) / max(1, cv2.getTextSize(
+            light_text, cv2.FONT_HERSHEY_SIMPLEX, 1, status_thickness)[0][0]))
         light_width = cv2.getTextSize(
             light_text,
             cv2.FONT_HERSHEY_SIMPLEX,
@@ -336,7 +340,7 @@ class Display:
         )[0][0]
         light_x = x + panel_width - light_width - max(13, round(16 * scale))
         dot_x = light_x - max(13, round(18 * scale))
-        dot_y = status_y + status_height // 2
+        dot_y = status_baseline - max(4, round(6 * scale))
         pulse = 1.0 - abs(2.0 * now.microsecond / 1_000_000.0 - 1.0)
         dot_radius = max(3, round(6.0 * scale))
         dot_color = tower_color
@@ -346,6 +350,13 @@ class Display:
         cv2.circle(frame, (dot_x, dot_y), dot_radius + max(1, round(scale)),
                    PANEL_BG, -1, cv2.LINE_AA)
         cv2.circle(frame, (dot_x, dot_y), dot_radius, dot_color, -1, cv2.LINE_AA)
+        transport_text = f'USB: {health.upper()}'
+        if getattr(tower, 'buzzer_outcome', None) == 'failed_or_unknown':
+            transport_text += ' BUZZER: ERROR'
+        cv2.putText(frame, transport_text, (x + 12, status_y + status_height - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, max(0.25, status_font * .8),
+                    PANEL_WHITE if health in ('connected', 'mock') else (0, 0, 255),
+                    1, cv2.LINE_AA)
         cv2.putText(frame, time_text, (x + max(13, round(16 * scale)), status_baseline),
                     cv2.FONT_HERSHEY_SIMPLEX, status_font, PANEL_WHITE,
                     status_thickness, cv2.LINE_AA)

@@ -1,6 +1,67 @@
 # Light tower control: pending modifications
 
-Status: **not implemented**. Updated: 2026-11-17.
+Status: **stage 1 implemented; hardware validation and persistent USB session pending**. Updated: 2026-11-17.
+
+## Implemented stage 1
+
+`TowerController` now schedules commands on one background thread. Each USB
+command still runs in its own PATLITE CLI process, using `sys.executable`.
+The parent polls the child, bounds command execution (default 3 seconds), kills
+and waits up to 0.5 seconds on timeout/cancellation, and never starts a second
+USB owner if termination cannot be confirmed. Child output is captured with
+only the last 4096 bytes per stream retained in each log entry.
+
+The controller tracks desired and successfully transmitted states separately.
+Failed LED commands retry after 1, 2, 4 and 8 seconds by default (5 total
+attempts). Exhaustion leaves `USB: UNAVAILABLE` visible; press **T** to retry
+the latest desired state. A new desired state also starts a new retry batch.
+Successful LED states refresh every 30 seconds, allowing transport loss and
+recovery to be detected while the carrier stays in `RESULT_HOLD`, or while
+camera frames are absent. Refresh is a write, not physical lamp readback.
+Stale queued states are superseded; an already running command finishes or
+times out before the latest state is dispatched. Recovery does not invoke
+inspection or statistics code.
+
+NG buzzer is attempted at most once per carrier, after its red LED write
+succeeds. Red retries and refreshes do not replay it. Failed/ambiguous buzzer
+delivery is logged separately and shown as `BUZZER: ERROR`; it is not retried
+automatically because a timed-out command may already have sounded the alarm.
+Pass/standby LED commands retain the vendor's `BUZZER_KEEP` behavior; the
+existing finite buzzer pattern ends by itself. No new buzzer-stop policy is
+introduced.
+
+`LR6main.py` validates CLI arguments, returns nonzero on failed writes or USB
+exceptions, prints raw/adjusted write lengths, and disposes USB resources in
+`finally`, including configuration failures. Exit codes: 0 success, 2 invalid
+CLI arguments, 3 rejected/short write, 4 USB exception. Cleanup exceptions also
+produce a nonzero process exit.
+
+Following review of the [official PATLITE example](https://github.com/PATLITE-Corporation/LR6-USB_windows_python_example/blob/main/src/main.py),
+**stage 1 retains per-command configuration and reset by default**. The Windows
+write-length adjustment and packet format are unchanged. Set
+`reset_after_command = false` (CLI `--no-reset`) only for controlled hardware
+A/B tests. Removing routine reset/reconfiguration and introducing a persistent
+USB session remain stage 2 work; stage 1 does not claim those goals complete.
+
+Diagnostics always append to `[LIGHT_TOWER] log_path` (default
+`./logs/tower.jsonl`), even with detection logging disabled. Events include
+request/command IDs, carrier/version, command arguments, reset policy, outcomes,
+bounded stdout/stderr, timeout, retry and recovery records. Each controller has
+its own diagnostic session ID. `CONNECTED` means transport write succeeded;
+physical readback is not available in this implementation. Mock mode is labeled
+`MOCK` and performs no USB I/O.
+
+Closing the OpenCV window or pressing Q ends the application and cancels tower
+recovery. The UI pumps events even without camera frames. Cleanup is idempotent,
+stops the scheduler and bounds worker join to 1.5 seconds. Shutdown sends no
+all-off command, preserving the existing final-light policy. Forced process
+termination cannot guarantee execution of Python cleanup.
+
+Configuration: `command_timeout_seconds`, `retry_initial_seconds`,
+`retry_max_seconds`, `max_attempts`, `refresh_seconds`, `reset_after_command`,
+`log_path`, and `mode`. Injected test `command_runner(args, timeout=...)`
+implementations must honor their timeout contract; production uses the owned,
+cancellable subprocess implementation.
 
 ## Simple explanation: what needs to change
 
@@ -18,7 +79,11 @@ Repeated USB resets are a suspect in the current code, but the root cause of the
 
 ## Pending work, highest priority first
 
-All items below are open. They are a backlog for a separate reliability change; the completed module refactor intentionally preserved existing USB behavior.
+The table below preserves the original baseline and target acceptance criteria.
+Stage 1 implements P0-03 through P0-06, the resource-release part of P0-02,
+and the bounded shutdown/buzzer/transport-health portions of P1-02 through
+P1-04. P0-01, avoiding redundant configuration in P0-02, persistent-session
+P1-01, physical readback and hardware validation remain pending.
 
 | Priority / ID | Current problem | Required modification | Acceptance condition |
 | --- | --- | --- | --- |
@@ -63,7 +128,12 @@ Do not label a successful write as confirmation that the lamp physically changed
 - [ ] Failure, retry and recovery information persists in logs, including the chosen behavior with detection logging disabled.
 - [ ] Shutdown is bounded and idempotent, including when a worker is stuck.
 
-Current [tower tests](../test/test_tower.py) characterize legacy behavior. Replace affected `known_issue` expectations when their corresponding fix is implemented, rather than preserving a defect to keep those tests passing. Retain the existing color-mapping checks and run the full application regression suite. See the [ranked test guide](testing.md).
+The [tower tests](../test/test_tower.py) now verify stage 1 command mapping,
+retry/backoff/exhaustion, stale requests, independent buzzer failure, periodic
+refresh, real hung-child timeout, cleanup, and the preserved vendor packet and
+Windows length rules. Application tests cover window-close/idle quit and
+idempotent shutdown. The original acceptance checklist above also includes
+stage 2 goals. See the [ranked test guide](testing.md).
 
 ### Windows and physical-device checks
 

@@ -55,6 +55,7 @@ def isolated_io(monkeypatch, tmp_path):
                  "destroyWindow", "destroyAllWindows", "setWindowProperty"):
         monkeypatch.setattr(cv2, name, Mock())
     monkeypatch.setattr(cv2, "waitKey", lambda _: -1)
+    monkeypatch.setattr(cv2, "getWindowProperty", lambda *args: 1)
 
 
 @pytest.fixture

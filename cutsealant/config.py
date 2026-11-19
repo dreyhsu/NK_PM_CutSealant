@@ -183,9 +183,23 @@ class ConfigManager:
         requested statuses in the terminal, without launching the USB helper.
         The fallback preserves compatibility with existing configuration files.
         """
-        return {
-            'mode': self.config.get('LIGHT_TOWER', 'mode', fallback='usb').strip().lower()
+        options = {
+            'mode': self.config.get('LIGHT_TOWER', 'mode', fallback='usb').strip().lower(),
+            'command_timeout_seconds': self.config.getfloat('LIGHT_TOWER', 'command_timeout_seconds', fallback=3),
+            'retry_initial_seconds': self.config.getfloat('LIGHT_TOWER', 'retry_initial_seconds', fallback=1),
+            'retry_max_seconds': self.config.getfloat('LIGHT_TOWER', 'retry_max_seconds', fallback=30),
+            'max_attempts': self.config.getint('LIGHT_TOWER', 'max_attempts', fallback=5),
+            'refresh_seconds': self.config.getfloat('LIGHT_TOWER', 'refresh_seconds', fallback=30),
+            'reset_after_command': self.config.getboolean('LIGHT_TOWER', 'reset_after_command', fallback=True),
+            'log_path': self.config.get('LIGHT_TOWER', 'log_path', fallback='./logs/tower.jsonl'),
         }
+        if options['mode'] not in ('usb', 'mock'):
+            raise ValueError('LIGHT_TOWER mode must be usb or mock')
+        import math
+        for key in ('command_timeout_seconds', 'retry_initial_seconds', 'retry_max_seconds', 'refresh_seconds', 'max_attempts'):
+            if not math.isfinite(options[key]) or options[key] <= 0:
+                raise ValueError(f'LIGHT_TOWER {key} must be finite and positive')
+        return options
 
     def get_classes(self):
         """Get class configuration"""

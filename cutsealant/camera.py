@@ -1,5 +1,6 @@
 """Camera functionality extracted from CutSealant V6.0.7."""
 import os
+import platform
 import queue
 from glob import glob
 
@@ -19,6 +20,18 @@ class CameraSource:
         self.capture = None
         self.thread = None
 
+    @staticmethod
+    def _opencv_camera_backend():
+        """Choose the native OpenCV capture backend for this operating system."""
+        system = platform.system()
+        if system == 'Windows':
+            return cv2.CAP_DSHOW
+        if system == 'Darwin':
+            return cv2.CAP_AVFOUNDATION
+        if system == 'Linux':
+            return cv2.CAP_V4L2
+        return cv2.CAP_ANY
+
     def _setup_video_source(self):
         """Setup video source (camera, dfk_camera, or file) with error handling"""
         ctx = self.context
@@ -28,7 +41,8 @@ class CameraSource:
             if video_config['mode'] == 'camera':
                 # 一般 USB/UVC 相機
                 print(f"Initializing camera {video_config['camera_index']}")
-                cap = ctx.capture_factory(video_config['camera_index'], cv2.CAP_DSHOW)
+                backend = self._opencv_camera_backend()
+                cap = ctx.capture_factory(video_config['camera_index'], backend)
 
                 if not cap.isOpened():
                     error_msg = f"Failed to open camera {video_config['camera_index']}"
@@ -46,7 +60,23 @@ class CameraSource:
                 # 設定手動焦距值 (範圍通常是 0-255)
                 cap.set(cv2.CAP_PROP_FOCUS, 0)
                 source_name = f"Camera_{video_config['camera_index']}"
-                print(f"Camera initialized: {video_config['camera_width']}x{video_config['camera_height']}")
+                actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                actual_fps = cap.get(cv2.CAP_PROP_FPS)
+                print(
+                    f"Camera initialized: {actual_width}x{actual_height} "
+                    f"at {actual_fps:.1f} FPS (backend={backend})")
+                if ctx.logger:
+                    ctx.logger.log_system_event('camera_initialized', {
+                        'camera_index': video_config['camera_index'],
+                        'backend': backend,
+                        'requested_resolution': [
+                            video_config['camera_width'],
+                            video_config['camera_height'],
+                        ],
+                        'actual_resolution': [actual_width, actual_height],
+                        'actual_fps': actual_fps,
+                    })
 
             elif video_config['mode'] == 'dfk_camera':
                 # TIS DFK 工業相機

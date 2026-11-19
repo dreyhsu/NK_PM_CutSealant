@@ -7,8 +7,11 @@ Created on Wed Dec 13 09:25:12 2023
 
 import struct
 import sys
+import argparse
+import json
 
 import usb.core
+import usb.util
 from usb.core import Device
 
 
@@ -105,43 +108,29 @@ BUZZER_PITCH_DFLT_B = 0xF
 
 
 def main():
-    args = sys.argv
-    argc = len(sys.argv)
-
-    # Connect to a USB controlled stacked signal light via USB communication
-    dev = usb_open()
-
-    # Get the command identifier specified by the command line argument
-    commandId = 0;
-    if argc > 1:
-        commandId = args[1];
-
-    if commandId == '1':
-        # Turn on and pattern the USB controlled stacked signal lights by specifying the LED color and LED pattern
-        if argc >= 4:
-            set_light(dev, int(args[2]), int(args[3]))
-
-    elif commandId == '2':
-        # Pattern lighting of USB controlled stacked signal lights by specifying multiple LED colors and LED patterns
-        if argc >= 7:
-            set_tower(dev, int(args[2]), int(args[3]), int(args[4]), int(args[5]), int(args[6]))
-
-    elif commandId == '3':
-        # Specify buzzer pattern to buzz USB controlled stacked signal lights
-        if argc >= 4:
-            set_buz(dev, int(args[2]), int(args[3]))
-
-    elif commandId == '4':
-        # Specify buzzer scale and pattern to buzz USB controlled laminated signal lights
-        if argc >= 6:
-            set_buz_ex(dev, int(args[2]), int(args[3]), int(args[4]), int(args[5]))
-
-    elif commandId == '5':
-        # Turn off all LED units and stop the buzzer
-        reset(dev)
-
-    # Terminate USB communication with USB controlled stacked signal light
-    usb_close()
+    parser = argparse.ArgumentParser(description='PATLITE LR6 USB command')
+    parser.add_argument('command', choices=['1', '2', '3', '4', '5'])
+    parser.add_argument('values', nargs='*', type=int)
+    parser.add_argument('--no-reset', action='store_true',
+                        help='Experimental: skip vendor post-write reset for hardware A/B tests')
+    args = parser.parse_args()
+    functions = {'1': (set_light, 2), '2': (set_tower, 5),
+                 '3': (set_buz, 2), '4': (set_buz_ex, 4), '5': (reset, 0)}
+    function, count = functions[args.command]
+    if len(args.values) != count or any(not 0 <= value <= 15 for value in args.values):
+        parser.error('wrong argument count or values outside 0..15')
+    dev = None
+    try:
+        dev = usb_open()
+        dev._patlite_reset_after_command = not args.no_reset
+        return 0 if function(dev, *args.values) else 3
+    except Exception as exc:
+        print(json.dumps({'error_type': type(exc).__name__, 'error': str(exc),
+                          'backend_error_code': getattr(exc, 'backend_error_code', None)}), file=sys.stderr)
+        return 4
+    finally:
+        if dev is not None:
+            usb_close(dev)
 
 
 def usb_open() -> Device:
@@ -159,24 +148,24 @@ def usb_open() -> Device:
     if dev is None:
         raise ValueError('device not found')
 
-    if sys.platform == 'linux':
-        # Detach the kernel driver
-        # ※Run only in Linux environment.
-        if dev.is_kernel_driver_active(0):
+    # Preserve vendor configuration behavior for this one-command process.
+    try:
+        if sys.platform == 'linux' and dev.is_kernel_driver_active(0):
             dev.detach_kernel_driver(0)
-
-    # Setting up device configuration
-    dev.set_configuration()
+        dev.set_configuration()
+    except Exception:
+        usb.util.dispose_resources(dev)
+        raise
 
     return dev
 
 
-def usb_close():
+def usb_close(dev):
     """
     Terminate USB communication with USB controlled stacked signal light
-    ※No implementation, as it will be automatically released.
+    Release resources even if command execution failed.
     """
-    pass
+    usb.util.dispose_resources(dev)
 
 
 def send_command(dev: Device, data: bytes) -> bool:
@@ -199,10 +188,13 @@ def send_command(dev: Device, data: bytes) -> bool:
     try:
         # Send
         write_length = dev.write(ENDPOINT_ADDRESS, data, SEND_TIMEOUT)
+        raw_write_length = write_length
         if sys.platform == 'win32':
             # In the Windows environment, reduce the write size by 1 byte because it returns 1 byte more.
             write_length -= 1
 
+        print(json.dumps({'expected_length': len(data), 'raw_write_length': raw_write_length,
+                          'adjusted_write_length': write_length}), flush=True)
         if write_length != len(data):
             print('falsed to send')
             return False
@@ -211,7 +203,8 @@ def send_command(dev: Device, data: bytes) -> bool:
 
     finally:
         # Resetting the device
-        dev.reset()
+        if getattr(dev, '_patlite_reset_after_command', True):
+            dev.reset()
 
 
 def set_light(dev: Device, color: int, state: int) -> bool:
@@ -489,4 +482,4 @@ def reset(dev: Device) -> bool:
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

@@ -2,11 +2,13 @@ import queue
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import cv2
 import numpy as np
 import pytest
 
 from cutsealant.app import SafeVideoProcessor
 from cutsealant.config import ConfigManager
+from cutsealant.camera import CameraSource
 
 
 def test_initialize_with_injected_model_camera_and_no_logs(tmp_path, frame):
@@ -19,6 +21,11 @@ def test_initialize_with_injected_model_camera_and_no_logs(tmp_path, frame):
     (tmp_path / "fake.pt").touch()
     model, cap = Mock(), Mock()
     cap.read.return_value = (True, frame)
+    cap.get.side_effect = lambda prop: {
+        cv2.CAP_PROP_FRAME_WIDTH: frame.shape[1],
+        cv2.CAP_PROP_FRAME_HEIGHT: frame.shape[0],
+        cv2.CAP_PROP_FPS: 30.0,
+    }.get(prop, 0)
     factory, capture = Mock(return_value=model), Mock(return_value=cap)
     p = SafeVideoProcessor(model_factory=factory, capture_factory=capture)
     try:
@@ -57,6 +64,17 @@ def test_camera_setup_failure_and_invalid_mode(processor):
     processor.config_manager.get_video_source_config.return_value = {"mode": "invalid"}
     with pytest.raises(ValueError):
         processor._setup_video_source()
+
+
+@pytest.mark.parametrize('system,expected', [
+    ('Windows', cv2.CAP_DSHOW),
+    ('Darwin', cv2.CAP_AVFOUNDATION),
+    ('Linux', cv2.CAP_V4L2),
+    ('Other', cv2.CAP_ANY),
+])
+def test_camera_backend_matches_operating_system(monkeypatch, system, expected):
+    monkeypatch.setattr('cutsealant.camera.platform.system', lambda: system)
+    assert CameraSource._opencv_camera_backend() == expected
 
 
 @pytest.mark.parametrize("opened", [True, False])

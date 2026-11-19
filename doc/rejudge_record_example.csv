@@ -1,0 +1,5 @@
+timestamp,session_id,video_source,frame_number,carrier_id,sealant_index,bbox_x,bbox_y,bbox_w,bbox_h,ai_result,confidence,user_reviewed,user_agrees,final_result
+2026-11-17 14:23:08,001,camera0,1842,7,0,120,240,65,180,NG,0.9235,True,False,REPASS
+2026-11-17 14:23:08,001,camera0,1843,7,1,300,240,62,178,Pass,0.9542,True,True,Pass
+2026-11-17 14:23:08,001,camera0,1844,7,2,480,241,64,179,Pass,0.9018,True,False,REFAIL
+2026-11-17 14:23:08,001,camera0,1845,7,3,660,239,63,181,NG,0.8876,True,True,NG

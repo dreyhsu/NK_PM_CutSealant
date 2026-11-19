@@ -9,6 +9,17 @@ import cv2
 import numpy as np
 
 
+def dispatch_synchronously(processor, monkeypatch):
+    """Make workflow assertions deterministic; worker behavior has separate tests."""
+    request = processor.tower._call_light_once
+    monkeypatch.setattr(processor.tower, 'start', Mock())
+    def dispatch(status):
+        result = request(status)
+        processor.tower.service_once()
+        return result
+    monkeypatch.setattr(processor.tower, '_call_light_once', dispatch)
+
+
 def test_new_and_legacy_launchers_use_same_entrypoint(monkeypatch):
     import cutsealant.app as app
     main = Mock(return_value=0)
@@ -52,6 +63,7 @@ assert not list(pathlib.Path.cwd().iterdir())
 
 
 def test_main_loop_standby_quit_and_cleanup(processor, frame, monkeypatch):
+    dispatch_synchronously(processor, monkeypatch)
     monkeypatch.setattr(processor, "initialize", Mock(return_value=True))
     monkeypatch.setattr(processor, "start_threads", Mock())
     processor.display_config = {"window_name": "fake"}
@@ -66,12 +78,13 @@ def test_main_loop_standby_quit_and_cleanup(processor, frame, monkeypatch):
     assert processor.run() is True
     assert processor.frame_count == 1
     assert processor.stop_event.is_set()
-    assert send.call_args.args[0] == ["python", "LR6main.py", "2", "0", "1", "0", "0", "0"]
+    assert send.call_args.args[0] == [sys.executable, "LR6main.py", "2", "0", "1", "0", "0", "0"]
     processor.cap.release.assert_called_once()
 
 
 def test_board_in_changes_static_yellow_to_tracking_blink(processor, frame, detection,
                                                           monkeypatch):
+    dispatch_synchronously(processor, monkeypatch)
     boxes, categories, scores = detection
     monkeypatch.setattr(processor, 'initialize', Mock(return_value=True))
     monkeypatch.setattr(processor, 'start_threads', Mock())
@@ -93,6 +106,7 @@ def test_board_in_changes_static_yellow_to_tracking_blink(processor, frame, dete
 
 
 def test_two_carrier_sequence_pass_then_ng(processor, frame, detection, monkeypatch):
+    dispatch_synchronously(processor, monkeypatch)
     boxes, categories, scores = detection
     send = Mock(return_value=0)
     processor.command_runner = send
@@ -133,3 +147,28 @@ def test_entrypoint_exception_still_stops_processor(monkeypatch):
     monkeypatch.setattr(app, "SafeVideoProcessor", Mock(return_value=processor))
     assert app.main() == 1
     processor.stop.assert_called_once()
+
+
+def test_window_close_stops_without_frames_and_cleanup_is_idempotent(processor, monkeypatch):
+    monkeypatch.setattr(processor, 'initialize', Mock(return_value=True))
+    monkeypatch.setattr(processor, 'start_threads', Mock())
+    monkeypatch.setattr(cv2, 'getWindowProperty', lambda *args: 0)
+    processor.display_config = {'window_name': 'fake'}
+    processor.light_tower_config = {'mode': 'mock'}
+    processor.cap = Mock()
+    assert processor.run()
+    processor.stop()
+    assert processor.stop_event.is_set()
+    assert not processor.tower._thread.is_alive()
+    processor.cap.release.assert_called_once()
+    processor.logger.close.assert_called_once()
+
+
+def test_quit_works_without_frames(processor, monkeypatch):
+    monkeypatch.setattr(processor, 'initialize', Mock(return_value=True))
+    monkeypatch.setattr(processor, 'start_threads', Mock())
+    monkeypatch.setattr(cv2, 'waitKey', lambda _: ord('q'))
+    processor.display_config = {'window_name': 'fake'}
+    processor.light_tower_config = {'mode': 'mock'}
+    assert processor.run()
+    assert not processor.tower._thread.is_alive()

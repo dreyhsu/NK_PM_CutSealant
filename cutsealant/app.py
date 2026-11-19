@@ -61,7 +61,7 @@ class SafeVideoProcessor:
         self.clock = clock if clock is not None else time
         self.model_factory = model_factory if model_factory is not None else load_yolo
         self.capture_factory = capture_factory if capture_factory is not None else lambda *a, **kw: cv2.VideoCapture(*a, **kw)
-        self.command_runner = command_runner if command_runner is not None else lambda args: subprocess.call(args)
+        self.command_runner = command_runner
         self.frame_queue = queue.Queue(maxsize=2)
         self.result_queue = queue.Queue(maxsize=2)
         self.camera = CameraSource(self)
@@ -73,6 +73,7 @@ class SafeVideoProcessor:
         self.review = ReviewController(self)
         self.monitoring = Monitoring(self)
         self.running = False
+        self._cleanup_done = False
         self.stop_event = threading.Event()
         self.cap = None
         self.model = None
@@ -290,6 +291,7 @@ class SafeVideoProcessor:
 
             self.start_threads()
             self.running = True
+            self.tower.start()
 
             # Initialize processing variables
             stop_time = 0
@@ -322,6 +324,7 @@ class SafeVideoProcessor:
             print("\n=== Keyboard Shortcuts ===")
             print("  Q: Quit | S: Screenshot | F: Fit screen | G: Fullscreen")
             print("  P: Statistics | R: Reset stats | V: Toggle recording")
+            print("  T: Retry tower after recovery exhaustion | Close window: Quit")
             print("===========================\n")
 
             # Create display window with proper flags for fullscreen support
@@ -334,23 +337,32 @@ class SafeVideoProcessor:
                 self.logger.log_state_change(None, self.detection_state, "initialization")
 
             while self.running and not self.stop_event.is_set():
+                # Pump HighGUI even while frames are unavailable.
+                key = cv2.waitKey(1) & 0xFF
+                if cv2.getWindowProperty(
+                        self.display_config['window_name'], cv2.WND_PROP_VISIBLE) < 1:
+                    break
                 # === Heartbeat logging for system health monitoring ===
                 self._log_heartbeat()
 
                 try:
-                    frame, boxes, scores, categories = self.result_queue.get(timeout=2.0)
+                    frame, boxes, scores, categories = self.result_queue.get(timeout=0.1)
                     frame_timeout_count = 0
                     self.last_frame_received_time = self.clock.time()
                     self.idle_warning_logged = False
 
                 except queue.Empty:
+                    if key == ord('q'):
+                        break
+                    if key in (ord('t'), ord('T')):
+                        self.tower.retry_latest()
                     frame_timeout_count += 1
 
                     # === 24/7 Mode: Log warning instead of stopping ===
                     idle_duration = self.clock.time() - self.last_frame_received_time
 
                     # Log warning at intervals (every 30 seconds of idle)
-                    if frame_timeout_count % 15 == 0:  # Every 30 seconds (15 * 2.0s timeout)
+                    if frame_timeout_count % 300 == 0:  # About every 30 seconds
                         print(f"[WARNING] No frames received for {idle_duration:.0f} seconds")
                         if self.logger:
                             self.logger.log_system_event("frame_idle_warning", {
@@ -460,7 +472,9 @@ class SafeVideoProcessor:
                 self._display_frame(frame, self.display_config['window_name'])
 
                 # Check for quit command
-                key = cv2.waitKey(1) & 0xFF
+                frame_key = cv2.waitKey(1) & 0xFF
+                if frame_key != 255:
+                    key = frame_key
                 if key == ord('q'):
                     print("Quit command received")
                     if self.logger:
@@ -469,6 +483,8 @@ class SafeVideoProcessor:
                 elif key == ord('s') or key == ord('S'):
                     # Screenshot function
                     self._take_screenshot(frame)
+                elif key in (ord('t'), ord('T')):
+                    self.tower.retry_latest()
                 elif key == ord('p') or key == ord('P'):
                     # Print statistics (moved from 's')
                     self._print_statistics()
@@ -506,9 +522,13 @@ class SafeVideoProcessor:
 
     def stop(self):
         """Stop video processor and cleanup resources"""
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
         print("Stopping video processor...")
         self.running = False
         self.stop_event.set()
+        self.tower.stop()
 
         # V6.0: Write any pending review before stopping
         if self.pending_review:

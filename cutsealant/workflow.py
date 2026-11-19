@@ -341,14 +341,15 @@ class InspectionWorkflow:
                     ctx.logger.log_state_change(old_state, ctx.detection_state, "detection_completed")
 
                 # Set result and update lights ONCE
+                ctx.carrier_count += 1
                 if not sealant_result:
                     ctx.detection_result = 'Pass'
                     current_status = ctx._call_light_once('Pass')
-                    print("Detection result: PASS - Light changed to GREEN")
+                    print("Detection result: PASS - GREEN requested")
                 else:
                     ctx.detection_result = 'NG'
                     current_status = ctx._call_light_once('NG')
-                    print("Detection result: NG - Light changed to RED")
+                    print("Detection result: NG - RED requested")
 
                 # Save detection image
                 ctx._save_img_data(raw_frame, sealant_boxes, sealant_result)
@@ -364,7 +365,6 @@ class InspectionWorkflow:
                     )
 
                 # === V6.0: Build pending_review data for rejudge log ===
-                ctx.carrier_count += 1
                 ctx.user_reviewed_flag = False  # Reset for new carrier
 
                 # Build pending_review structure

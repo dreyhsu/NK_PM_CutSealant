@@ -92,7 +92,7 @@ python yoloVideoMain_V6.0.7.py
 3. Replace the original developer's absolute model/video paths. For example, use `./models/yolo11s_20251223.pt` and your own video path.
 4. Select `[DEVICE_SETTINGS] device` for the host. The checked-in configuration uses `mps` for the original Mac. For a CPU configuration, use `cpu` and set `[YOLO_SETTINGS] use_half_precision = false`. CUDA requires an appropriate local PyTorch/CUDA installation.
 5. TIS industrial-camera mode requires the matching vendor camera software and x64 DLLs, including the configured `tisgrabber_x64.dll`, installed locally. These binaries are excluded from Git. General camera mode currently uses OpenCV DirectShow, so its existing implementation targets Windows.
-6. Set `[LIGHT_TOWER] mode = mock` to print each requested tower status in the terminal without accessing USB. Set `mode = usb` to control the physical PATLITE; this requires PyUSB and the appropriate working USB backend/driver setup for the Windows installation. Preserve a known-working driver setup; installing Python packages alone does not establish it. The USB mode launches `python LR6main.py`, so `python` on `PATH` must refer to the intended environment. Activate the environment when using the physical tower:
+6. Set `[LIGHT_TOWER] mode = mock` to simulate tower transport without accessing USB. Set `mode = usb` to control the physical PATLITE; this requires PyUSB and the appropriate working USB backend/driver setup for the Windows installation. Preserve a known-working driver setup; installing Python packages alone does not establish it. USB commands run in serialized background child processes using the application's Python interpreter. Activate the environment when using the physical tower:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -115,7 +115,7 @@ The only `.exe` in the original delivery is a camera installer; it is not a comp
 | `cutsealant/detector.py` | Lazily loads YOLO, predicts object boxes/classes/confidence and runs the inference worker. |
 | `cutsealant/inspection.py` | Evaluates crops using lightness clustering and contour convexity. |
 | `cutsealant/workflow.py` | Owns carrier state and controls inspection triggers and result hold. |
-| `cutsealant/tower.py` | Sends existing PATLITE child-process commands and caches requested status. |
+| `cutsealant/tower.py` | Schedules serialized PATLITE processes, timeouts, LED recovery and independent buzzer outcomes. |
 | `cutsealant/display.py` | Draws overlays, matches boxes, displays frames and handles screenshots/window sizing. |
 | `cutsealant/review.py` | Displays sealant crops, handles agreement choices and writes pending review records. |
 | `cutsealant/recording.py` | Records raw or annotated frames. |
@@ -134,6 +134,8 @@ There is one application, not one process per module. Background capture and inf
 | Key | Action |
 | --- | --- |
 | `q` | Quit (the current implementation uses lowercase). |
+| Close main window | Quit and stop tower retries. |
+| `T` / `t` | Retry the latest desired tower state after recovery exhaustion. |
 | `S` / `s` | Save screenshot. |
 | `F` / `f` | Toggle fit-to-screen. |
 | `G` / `g` | Toggle fullscreen. |
@@ -178,15 +180,26 @@ The suite uses real OpenCV calculations with simulated camera, YOLO, GUI and USB
 
 The original 38 characterization cases pass against both the committed monolith and the extracted implementation. The expanded suite covers module boundaries and simulated lifecycle flows. Real-model accuracy and Windows hardware stability require the manual procedures.
 
-## Known USB-control limitations retained in this refactor
+## Tower recovery and remaining hardware checks
 
-- The USB child calls `set_configuration()` on each invocation and `dev.reset()` after each write. Its `usb_close()` is a no-op.
-- Tower calls block the main loop and have no subprocess-level timeout. The write timeout is not an overall process timeout.
-- A nonzero light-process exit is printed rather than saved as an application error. A child function returning `False` may still result in exit code zero; the buzzer return code is ignored.
-- `status_change` means the application accepted a subprocess outcome; there is no readback of the physical tower state.
-- Requested-state caching can suppress resending after a physical disconnect. Failed result commands are not continuously retried during result hold.
-- Shutdown does not explicitly turn the tower off.
+Tower commands run outside the UI thread, with a 3-second command timeout and
+5 total attempts per recovery batch by default. A newer requested color replaces
+queued work. Successful LED states refresh every 30 seconds, including during
+result hold; recovery never triggers another inspection/statistics row. After
+recovery exhaustion, `USB: UNAVAILABLE` remains visible. Press **T** or request
+a different state to begin another batch.
 
-These are documented investigation points, not proof of the cause of the reported Windows freeze. USB reliability fixes and four-location completeness rules are separate work.
+The overlay distinguishes `REQUEST` from USB transport health. Successful writes
+do not physically confirm the lamp. Buzzer delivery is tracked separately and
+attempted at most once per carrier; ambiguous/failed delivery shows `BUZZER: ERROR`
+without automatically sounding it again. Tower events always append to
+`./logs/tower.jsonl` (configurable), even with detection logging disabled.
 
-See [pending light tower modifications](doc/light_tower_pending_changes.md) for a simple explanation, prioritized work items and verification checklists. Those changes have not been implemented.
+Stage 1 keeps the official per-command `set_configuration()` and USB reset.
+Resources are explicitly released on completion/failure. `reset_after_command = false`
+enables controlled no-reset hardware testing; a persistent USB session remains
+future work. Closing OpenCV or pressing Q cancels recovery and releases the
+controller. Shutdown preserves the existing policy of sending no all-off command.
+
+Windows driver/hardware recovery and 24-hour stability require real-device
+validation. See [implementation status and remaining tower work](doc/light_tower_pending_changes.md).

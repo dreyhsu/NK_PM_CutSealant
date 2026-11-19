@@ -71,7 +71,7 @@ def test_workflow_panel_is_drawn_at_top_right(monkeypatch):
     display._draw_workflow_panel(frame, 'Standby')
 
     assert {'WORKFLOW', 'Board-In', 'Inspecting 4 modules', 'Board-Out',
-            'LIGHT: STANDBY (STATIC)'} <= set(labels)
+            'REQUEST: STANDBY (STATIC)', 'USB: UNKNOWN'} <= set(labels)
     assert any(label.startswith('TIME ') for label in labels)
     panel_top_left, _ = rectangles[0]
     assert panel_top_left[0] > frame.shape[1] // 2
@@ -100,7 +100,7 @@ def test_top_left_osd_is_removed(monkeypatch):
     monkeypatch.setattr(cv2, 'putText', capture_text)
     display._add_ui_elements(frame, 'NG')
 
-    assert 'LIGHT: NG' in labels
+    assert 'REQUEST: NG' in labels
     assert not any(label.startswith(('Status:', 'State:', 'Result:', 'Broken:'))
                    for label in labels)
     assert 'All sealant OK' not in labels
@@ -121,4 +121,4 @@ def test_tracking_osd_identifies_blinking_yellow(monkeypatch):
     monkeypatch.setattr(cv2, 'putText', capture_text)
     display._draw_workflow_panel(frame, 'Tracking')
 
-    assert 'LIGHT: TRACKING (BLINK)' in labels
+    assert 'REQUEST: TRACKING (BLINK)' in labels
