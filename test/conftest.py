@@ -22,6 +22,17 @@ def forbidden(*args, **kwargs):
 
 @pytest.fixture(scope="session")
 def legacy():
+    if not os.environ.get('CUTSEALANT_BASELINE_REF'):
+        # The historical files are standalone snapshots; test main.py's services.
+        import cutsealant.app as app
+        from cutsealant.review import ManualReviewWindow
+        yield types.SimpleNamespace(
+            **{name: getattr(app, name) for name in (
+                'SafeVideoProcessor', 'ConfigManager', 'JSONLogger',
+                'RejudgeLogger', 'StatisticsLogger', 'VideoRecorder')},
+            ManualReviewWindow=ManualReviewWindow,
+        )
+        return
     # Baseline imports ultralytics eagerly; the test suite never needs a model.
     stub = types.ModuleType("ultralytics")
     stub.YOLO = forbidden

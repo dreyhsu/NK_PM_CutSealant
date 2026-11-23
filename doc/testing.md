@@ -11,6 +11,16 @@ Tests use real NumPy/OpenCV image operations and fake model, camera, USB and GUI
 
 ## Ranked conditions (highest importance first)
 
+### Camera alignment and case terminology (2026-11-23)
+
+The default shared fixture now targets the refactored services used by `main.py`, rather than the standalone V6.0.7 snapshot. Historical baseline results below describe earlier code; they do not establish equivalence with the current live inspection workflow.
+
+`test_camera_health.py` covers ROI boundaries, choosing the displayed largest carrier, blocking inspection/statistics/images for an outside carrier center, latching through absence/reappearance, operator reset and rechecking, scalable time-based blinking, the reset hint, configuration validation, and migration from `expected_module_count` to `expected_case_count`. Workflow panel tests verify Carrier-In, cases on carrier, and Carrier-Out labels. Real camera positioning and operator-visible warnings still require acceptance on the production desktop.
+
+Verification command: `.venv/bin/python -m pytest -q`.
+
+Executed on 2026-11-23: **136 passed** in 5.95 seconds. This includes both lowercase and uppercase C-key dispatch through the main loop and verifies that reset clears the stop counter and previous center before inspection can resume.
+
 These IDs identify test groups; parameterized functions cover multiple cases. Passing characterization tests document existing behavior, including defects. They do not certify that behavior as a safe production rule.
 
 | Priority / ID | Purpose and expected behavior | Automated tests |

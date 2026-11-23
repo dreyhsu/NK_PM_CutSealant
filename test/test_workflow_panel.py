@@ -7,44 +7,44 @@ from cutsealant.display import Display
 from cutsealant.workflow import WORKFLOW_STEPS, WorkflowPanelState
 
 
-def test_five_step_workflow_completes_and_stays_visible_until_next_board():
+def test_three_step_workflow_completes_and_stays_visible_until_next_carrier():
     workflow = WorkflowPanelState()
 
-    assert workflow.status('board_in') == 'CURRENT'
+    assert workflow.status('carrier_in') == 'CURRENT'
     workflow.update(True, 0, 'WAITING')
-    assert workflow.status('board_in') == 'DONE'
-    assert workflow.status('inspecting_modules') == 'CURRENT'
+    assert workflow.status('carrier_in') == 'DONE'
+    assert workflow.status('inspecting_cases') == 'CURRENT'
 
     workflow.update(True, 4, 'WAITING')
-    assert workflow.label('inspecting_modules') == 'Inspecting 4 modules'
-    assert workflow.status('inspecting_modules') == 'CURRENT'
+    assert workflow.label('inspecting_cases') == 'Inspecting 4 cases on carrier'
+    assert workflow.status('inspecting_cases') == 'CURRENT'
 
     # The OSD follows the current count so an obstruction is visible.
     workflow.update(True, 3, 'RESULT_HOLD')
-    assert workflow.module_count == 3
-    assert workflow.status('inspecting_modules') == 'CURRENT'
-    assert workflow.status('board_out') == 'PENDING'
+    assert workflow.case_count == 3
+    assert workflow.status('inspecting_cases') == 'CURRENT'
+    assert workflow.status('carrier_out') == 'PENDING'
 
-    workflow.update(False, 0, 'WAITING', board_released=True)
+    workflow.update(False, 0, 'WAITING', carrier_released=True)
     assert workflow.complete is True
     assert workflow.completed_count == len(WORKFLOW_STEPS)
     assert workflow.phase == 'Cycle complete'
 
-    workflow.update(False, 0, 'WAITING', board_released=True)
+    workflow.update(False, 0, 'WAITING', carrier_released=True)
     assert workflow.complete is True
 
     workflow.update(True, 2, 'WAITING')
     assert workflow.complete is False
-    assert workflow.module_count == 2
-    assert workflow.status('inspecting_modules') == 'CURRENT'
+    assert workflow.case_count == 2
+    assert workflow.status('inspecting_cases') == 'CURRENT'
 
 
-def test_incomplete_board_departure_resets_cycle():
+def test_incomplete_carrier_departure_resets_cycle():
     workflow = WorkflowPanelState()
     workflow.update(True, 3, 'WAITING')
-    workflow.update(False, 0, 'WAITING', board_released=True)
+    workflow.update(False, 0, 'WAITING', carrier_released=True)
     assert workflow.completed_count == 0
-    assert workflow.status('board_in') == 'CURRENT'
+    assert workflow.status('carrier_in') == 'CURRENT'
 
 
 def test_workflow_panel_is_drawn_at_top_right(monkeypatch):
@@ -70,7 +70,7 @@ def test_workflow_panel_is_drawn_at_top_right(monkeypatch):
     monkeypatch.setattr(cv2, 'rectangle', capture_rectangle)
     display._draw_workflow_panel(frame, 'Standby')
 
-    assert {'WORKFLOW', 'Board-In', 'Inspecting 4 modules', 'Board-Out',
+    assert {'WORKFLOW', 'Carrier-In', 'Inspecting 4 cases on carrier', 'Carrier-Out',
             'REQUEST: STANDBY (STATIC)', 'USB: UNKNOWN'} <= set(labels)
     assert any(label.startswith('TIME ') for label in labels)
     panel_top_left, _ = rectangles[0]

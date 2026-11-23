@@ -5,53 +5,53 @@ import cv2
 import numpy as np
 
 WORKFLOW_STEPS = (
-    'board_in',
-    'inspecting_modules',
-    'board_out',
+    'carrier_in',
+    'inspecting_cases',
+    'carrier_out',
 )
 
 
 @dataclass
 class WorkflowPanelState:
-    """Persistent five-step cycle shown on every displayed frame."""
+    """Persistent carrier cycle, with cases inspected on the carrier."""
 
     completed: set = field(default_factory=set)
-    module_count: int = 0
+    case_count: int = 0
     cycle_started: bool = False
     cycle_complete: bool = False
     inspection_started: bool = False
 
     def reset(self):
-        """Prepare the panel for a board that has not arrived yet."""
+        """Prepare the panel for a carrier that has not arrived yet."""
         self.completed.clear()
-        self.module_count = 0
+        self.case_count = 0
         self.cycle_started = False
         self.cycle_complete = False
         self.inspection_started = False
 
-    def update(self, board_present, module_count, detection_state, board_released=False):
+    def update(self, carrier_present, case_count, detection_state, carrier_released=False):
         """Advance the display state from observations made for the current frame."""
-        module_count = max(0, int(module_count))
+        case_count = max(0, int(case_count))
 
-        # Keep a completed cycle on screen until the next board starts a new one.
-        if board_present and self.cycle_complete:
+        # Keep a completed cycle on screen until the next carrier starts a new one.
+        if carrier_present and self.cycle_complete:
             self.reset()
 
-        if board_present:
+        if carrier_present:
             self.cycle_started = True
-            self.completed.add('board_in')
-            # Show the current count so a blocked module is visible in the OSD.
-            self.module_count = module_count
+            self.completed.add('carrier_in')
+            # Show the current count so a blocked case is visible in the OSD.
+            self.case_count = case_count
 
         if detection_state == 'RESULT_HOLD' and self.cycle_started:
             self.inspection_started = True
 
-        if board_released:
+        if carrier_released:
             if self.inspection_started:
-                self.completed.update(('inspecting_modules', 'board_out'))
+                self.completed.update(('inspecting_cases', 'carrier_out'))
                 self.cycle_complete = True
             else:
-                # An incomplete board departure is not a completed cycle.
+                # An incomplete carrier departure is not a completed cycle.
                 self.reset()
 
     @property
@@ -71,9 +71,9 @@ class WorkflowPanelState:
 
     def label(self, step):
         labels = {
-            'board_in': 'Board-In',
-            'inspecting_modules': f'Inspecting {self.module_count} modules',
-            'board_out': 'Board-Out',
+            'carrier_in': 'Carrier-In',
+            'inspecting_cases': f'Inspecting {self.case_count} cases on carrier',
+            'carrier_out': 'Carrier-Out',
         }
         return labels.get(step, '')
 
@@ -95,6 +95,7 @@ class InspectionState:
     absent_frame_count: object = 0
     result_hold_start_time: object = 0
     detection_start_time: object = 0
+    camera_error_start_time: float = 0
     pending_review: object = None
     carrier_count: object = 0
     user_reviewed_flag: object = False
@@ -112,14 +113,31 @@ class InspectionWorkflow:
         self.state = InspectionState()
         self.panel = WorkflowPanelState()
 
-    def update_panel(self, board_present, module_count, board_released=False):
+    def update_panel(self, carrier_present, case_count, carrier_released=False):
         """Update the persistent overlay model after processing a frame."""
         self.panel.update(
-            board_present,
-            module_count,
+            carrier_present,
+            case_count,
             self.context.detection_state,
-            board_released,
+            carrier_released,
         )
+
+    def reset_camera_error(self, current_status):
+        """Release the latched error; the next stop must pass the ROI check again."""
+        ctx = self.context
+        if ctx.detection_state != 'CAMERA_ERROR':
+            return current_status
+        duration = round(ctx.clock.time() - ctx.camera_error_start_time, 1)
+        if ctx.logger:
+            ctx.logger.log_system_event('camera_error_reset_by_operator', {
+                'error_duration_seconds': duration,
+            })
+            ctx.logger.log_state_change('CAMERA_ERROR', 'WAITING', 'operator_reset_c_key')
+        ctx.detection_state = 'WAITING'
+        ctx.camera_error_start_time = 0
+        ctx.absent_frame_count = 0
+        self.panel.reset()
+        return ctx._call_light_once('Standby')
 
     def _handle_objects_present(self, frame, raw_frame, boxes, categories, sealant_boxes, scores,
                                current_status, stop_time, previous_centroid):
@@ -130,9 +148,9 @@ class InspectionWorkflow:
         ctx.absent_frame_count = 0
 
         if ctx.detection_state == 'RESULT_HOLD':
-            # The result remains live while the plate is present. A temporary
-            # obstruction can make it red, then all four passing modules turn it
-            # green without requiring a new board cycle.
+            # The result remains live while the carrier is present. A temporary
+            # obstruction can make it red, then all four passing cases turn it
+            # green without requiring a new carrier cycle.
             sealant_result = ctx._cut_sealant_detection(raw_frame, sealant_boxes)
             new_result = 'NG' if sealant_result else 'Pass'
             ctx.current_sealant_result = sealant_result
@@ -147,7 +165,7 @@ class InspectionWorkflow:
                     ctx.logger.log_system_event('detection_result_updated', {
                         'old_result': old_result,
                         'new_result': new_result,
-                        'module_count': len(sealant_boxes),
+                        'case_count': len(sealant_boxes),
                     })
             return current_status, stop_time, previous_centroid
 
@@ -166,7 +184,7 @@ class InspectionWorkflow:
         return current_status, stop_time, previous_centroid
 
     def _update_review_snapshot(self, raw_frame, boxes, categories, sealant_boxes, scores):
-        """Store the latest live result so Board-Out logs the final status."""
+        """Store the latest live result so Carrier-Out logs the final status."""
         ctx = self.context
         ctx.current_raw_frame = raw_frame.copy()
         ctx.current_sealant_boxes = sealant_boxes.copy() if sealant_boxes else []
@@ -293,8 +311,7 @@ class InspectionWorkflow:
 
         h, w = frame.shape[:2]
 
-        carrier_idx = list(categories).index(ctx.class_map['carrier'])
-        carrier_pos = boxes[carrier_idx]
+        carrier_pos = ctx._check_correct_carrier(categories, boxes)
         centroid = [
             int((carrier_pos[2] - carrier_pos[0]) / 2) + carrier_pos[0],
             int((carrier_pos[3] - carrier_pos[1]) / 2) + carrier_pos[1]
@@ -309,6 +326,26 @@ class InspectionWorkflow:
 
             if stop_time / ctx.detection_config['fps'] > ctx.detection_config['stop_threshold_seconds']:
                 print(f'Detection triggered after {round(stop_time/ctx.detection_config["fps"], 2)} seconds')
+
+                cfg = ctx.camera_health_config
+                roi_x = int(cfg.get('roi_x_ratio', 0.25) * w)
+                roi_y = int(cfg.get('roi_y_ratio', 0.25) * h)
+                roi_w = int(cfg.get('roi_w_ratio', 0.50) * w)
+                roi_h = int(cfg.get('roi_h_ratio', 0.50) * h)
+                if not (roi_x <= centroid[0] <= roi_x + roi_w
+                        and roi_y <= centroid[1] <= roi_y + roi_h):
+                    old_state = ctx.detection_state
+                    ctx.detection_state = 'CAMERA_ERROR'
+                    ctx.camera_error_start_time = ctx.clock.time()
+                    if ctx.logger:
+                        ctx.logger.log_state_change(old_state, 'CAMERA_ERROR',
+                                                   'carrier_centroid_outside_roi')
+                        ctx.logger.log_system_event('camera_misalignment_detected', {
+                            'centroid': centroid,
+                            'roi': {'x': roi_x, 'y': roi_y, 'w': roi_w, 'h': roi_h},
+                        })
+                    print('[CAMERA_HEALTH] Carrier stopped outside ROI; inspect alignment and press C')
+                    return ctx._call_light_once('Standby'), 0, centroid
 
                 # === NEW: Record detection start time for cycle time calculation ===
                 ctx.detection_start_time = ctx.clock.time()

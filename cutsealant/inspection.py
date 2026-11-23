@@ -6,7 +6,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class InspectionResult:
-    """Snapshot: True in by_box means NG; incomplete plates are also NG."""
+    """Snapshot: True in by_box means NG; carriers with missing cases are also NG."""
     is_ng: bool
     by_box: dict[str, bool]
 
@@ -25,7 +25,7 @@ class SealantInspector:
     def _cut_sealant_detection(self, frame, boxes):
         """Detect if sealant is properly cut and store individual results"""
         ctx = self.context
-        expected_count = ctx.detection_config.get('expected_module_count', 4)
+        expected_count = ctx.detection_config.get('expected_case_count', 4)
 
         frame_hsl = cv2.cvtColor(frame, cv2.COLOR_BGR2HLS)
         ctx.sealant_detection_results = {}

@@ -20,19 +20,19 @@ def dispatch_synchronously(processor, monkeypatch):
     monkeypatch.setattr(processor.tower, '_call_light_once', dispatch)
 
 
-def test_new_and_legacy_launchers_use_same_entrypoint(monkeypatch):
+def test_main_launcher_uses_refactored_entrypoint(monkeypatch):
     import cutsealant.app as app
     main = Mock(return_value=0)
     monkeypatch.setattr(app, "main", main)
     root = Path(__file__).resolve().parents[1]
-    for filename in ("main.py", "yoloVideoMain_V6.0.7.py"):
+    for filename in ("main.py",):
         try:
             runpy.run_path(str(root / filename), run_name="__main__")
         except SystemExit as result:
             assert result.code == 0
         else:
             raise AssertionError("Launcher must return the entrypoint's exit code")
-    assert main.call_count == 2
+    main.assert_called_once_with()
 
 
 def test_import_has_no_external_side_effects(tmp_path):

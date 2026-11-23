@@ -154,6 +154,7 @@ class SafeVideoProcessor:
         self.rejudge_config = {}             # Rejudge configuration
         self.review_log_written = False      # Whether rejudge log has been written for current carrier
         self.fullscreen_paused_for_review = False  # Whether fullscreen was exited to show review window
+        self.camera_health_config = {}
 
     def initialize(self):
         """Initialize all components with enhanced error handling"""
@@ -165,6 +166,7 @@ class SafeVideoProcessor:
             self.paths = self.config_manager.get_paths()
             self.yolo_config = self.config_manager.get_yolo_config()
             self.detection_config = self.config_manager.get_detection_config()
+            self.camera_health_config = self.config_manager.get_camera_health_config()
             self.display_config = self.config_manager.get_display_config()
             self.device = self.config_manager.get_device()
             self.light_tower_config = self.config_manager.get_light_tower_config()
@@ -184,6 +186,7 @@ class SafeVideoProcessor:
                     "paths": self.paths,
                     "yolo_config": self.yolo_config,
                     "detection_config": self.detection_config,
+                    "camera_health_config": self.camera_health_config,
                     "display_config": self.display_config,
                     "device": self.device,
                     "light_tower_config": self.light_tower_config,
@@ -299,6 +302,7 @@ class SafeVideoProcessor:
 
             # === NEW: Initialize detection state machine ===
             self.detection_state = 'WAITING'
+            self.camera_error_start_time = 0
             self.detection_result = None
             self.workflow.panel.reset()
             current_status = self._call_light_once('Standby')
@@ -325,6 +329,7 @@ class SafeVideoProcessor:
             print("  Q: Quit | S: Screenshot | F: Fit screen | G: Fullscreen")
             print("  P: Statistics | R: Reset stats | V: Toggle recording")
             print("  T: Retry tower after recovery exhaustion | Close window: Quit")
+            print("  C: Reset camera alignment error | M: Review cases on carrier")
             print("===========================\n")
 
             # Create display window with proper flags for fullscreen support
@@ -356,6 +361,10 @@ class SafeVideoProcessor:
                         break
                     if key in (ord('t'), ord('T')):
                         self.tower.retry_latest()
+                    if key in (ord('c'), ord('C')) and self.detection_state == 'CAMERA_ERROR':
+                        current_status = self.workflow.reset_camera_error(current_status)
+                        stop_time = 0
+                        previous_centroid = [0, 0]
                     frame_timeout_count += 1
 
                     # === 24/7 Mode: Log warning instead of stopping ===
@@ -418,21 +427,21 @@ class SafeVideoProcessor:
 
                 # === NEW: Enhanced detection logic with state machine ===
                 detected_classes = set(categories)
-                board_present = self.class_map['carrier'] in detected_classes
-                module_count = sum(
+                carrier_present = self.class_map['carrier'] in detected_classes
+                case_count = sum(
                     1 for category in categories
                     if category == self.class_map['sealant']
                 )
 
-                if board_present:
-                    board_arriving = (
+                if carrier_present:
+                    carrier_arriving = (
                         not self.workflow.panel.cycle_started
                         or self.workflow.panel.complete
                     )
-                    if board_arriving:
+                    if carrier_arriving and self.detection_state != 'CAMERA_ERROR':
                         current_status = self._call_light_once('Tracking')
-                    # Keep evaluating while the board remains present, even if
-                    # one or more module detections are temporarily blocked.
+                    # Keep evaluating while the carrier remains present, even if
+                    # one or more case detections are temporarily blocked.
                     # V6.0: Pass scores for confidence tracking
                     current_status, stop_time, previous_centroid = self._handle_objects_present(
                         frame, raw_frame, boxes, categories, sealant_boxes, scores,
@@ -444,15 +453,15 @@ class SafeVideoProcessor:
                         current_status, stop_time, previous_centroid
                     )
 
-                board_released = (
-                    not board_present
+                carrier_released = (
+                    not carrier_present
                     and self.absent_frame_count
                     >= self.detection_config.get('absent_tolerance_frames', 5)
                 )
                 self.workflow.update_panel(
-                    board_present,
-                    module_count,
-                    board_released,
+                    carrier_present,
+                    case_count,
+                    carrier_released,
                 )
                 self._add_ui_elements(frame, current_status)
 
@@ -485,6 +494,11 @@ class SafeVideoProcessor:
                     self._take_screenshot(frame)
                 elif key in (ord('t'), ord('T')):
                     self.tower.retry_latest()
+                elif key in (ord('c'), ord('C')):
+                    if self.detection_state == 'CAMERA_ERROR':
+                        current_status = self.workflow.reset_camera_error(current_status)
+                        stop_time = 0
+                        previous_centroid = [0, 0]
                 elif key == ord('p') or key == ord('P'):
                     # Print statistics (moved from 's')
                     self._print_statistics()

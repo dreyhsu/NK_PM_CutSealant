@@ -48,11 +48,11 @@ def test_missing_fourth_region_is_ng(processor, frame, detection, monkeypatch):
 def test_extra_region_is_ng(processor, frame, detection, monkeypatch):
     boxes, _, _ = detection
     extra = np.array([[5, 5, 25, 25]], np.int32)
-    module_boxes = np.concatenate((boxes[1:], extra))
+    case_boxes = np.concatenate((boxes[1:], extra))
     monkeypatch.setattr(processor, '_loop_closed_identify', lambda _: True)
     frame[:] = 255
     cv2.setRNGSeed(42)
-    assert processor._cut_sealant_detection(frame, module_boxes) is True
+    assert processor._cut_sealant_detection(frame, case_boxes) is True
     assert len(processor.sealant_detection_results) == 5
 
 

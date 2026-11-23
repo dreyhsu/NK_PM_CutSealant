@@ -1,5 +1,6 @@
 """INI configuration; paths retain their original working-directory semantics."""
 import configparser
+import math
 import os
 
 
@@ -54,7 +55,7 @@ class ConfigManager:
             'fps': '15',
             'stop_threshold_seconds': '0.95',
             'distance_threshold_pixels': '10',
-            'expected_module_count': '4',
+            'expected_case_count': '4',
             'kmeans_clusters': '3',
             'kmeans_rounds': '10',
             # Tolerance mechanism for detection box flickering
@@ -102,6 +103,16 @@ class ConfigManager:
             'quality': 'medium'  # 'low', 'medium', 'high'
         }
 
+        self.config['CAMERA_HEALTH'] = {
+            'roi_x_ratio': '0.25',
+            'roi_y_ratio': '0.25',
+            'roi_w_ratio': '0.50',
+            'roi_h_ratio': '0.50',
+            'alert_blink_interval': '0.5',
+            'alert_font_scale_ratio': '0.04',
+            'alert_border_thickness_ratio': '0.012',
+        }
+
         # Create the destination directory before saving a new config.
         config_dir = os.path.dirname(self.config_file)
         if config_dir:
@@ -147,12 +158,14 @@ class ConfigManager:
 
     def get_detection_config(self):
         """Get detection configuration"""
+        count_key = ('expected_case_count' if self.config.has_option(
+            'DETECTION_SETTINGS', 'expected_case_count') else 'expected_module_count')
         return {
             'fps': self.config.getint('DETECTION_SETTINGS', 'fps'),
             'stop_threshold_seconds': self.config.getfloat('DETECTION_SETTINGS', 'stop_threshold_seconds'),
             'distance_threshold_pixels': self.config.getint('DETECTION_SETTINGS', 'distance_threshold_pixels'),
-            'expected_module_count': self.config.getint(
-                'DETECTION_SETTINGS', 'expected_module_count', fallback=4),
+            'expected_case_count': self.config.getint(
+                'DETECTION_SETTINGS', count_key, fallback=4),
             'kmeans_clusters': self.config.getint('DETECTION_SETTINGS', 'kmeans_clusters'),
             'kmeans_rounds': self.config.getint('DETECTION_SETTINGS', 'kmeans_rounds'),
             # Tolerance mechanism for detection box flickering
@@ -171,6 +184,25 @@ class ConfigManager:
             'max_scale': self.config.getfloat('DISPLAY_SETTINGS', 'max_scale', fallback=1.0),
             'min_scale': self.config.getfloat('DISPLAY_SETTINGS', 'min_scale', fallback=0.1)
         }
+
+    def get_camera_health_config(self):
+        """Read the allowed carrier-center ROI and scalable visual alert settings."""
+        defaults = {
+            'roi_x_ratio': 0.25, 'roi_y_ratio': 0.25,
+            'roi_w_ratio': 0.50, 'roi_h_ratio': 0.50,
+            'alert_blink_interval': 0.5, 'alert_font_scale_ratio': 0.04,
+            'alert_border_thickness_ratio': 0.012,
+        }
+        options = {key: self.config.getfloat('CAMERA_HEALTH', key, fallback=value)
+                   for key, value in defaults.items()}
+        for key, value in options.items():
+            if not math.isfinite(value) or value < 0 or (value == 0 and key not in (
+                    'roi_x_ratio', 'roi_y_ratio')):
+                raise ValueError(f'CAMERA_HEALTH {key} must be finite and positive (ROI origins may be zero)')
+        for axis, size in (('x', 'w'), ('y', 'h')):
+            if options[f'roi_{axis}_ratio'] + options[f'roi_{size}_ratio'] > 1:
+                raise ValueError('CAMERA_HEALTH ROI must fit inside the frame')
+        return options
 
     def get_device(self):
         """Get device configuration"""

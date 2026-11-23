@@ -1,6 +1,6 @@
 # CutSealant inspection
 
-Python application for inspecting sealant on EPS power-module carriers. It reads a camera or video, locates the carrier and sealant with YOLO, evaluates the detected sealant crops with OpenCV, and sends commands to a PATLITE USB signal tower.
+Python application for inspecting sealant on cases carried on a carrier. It reads a camera or video, locates the carrier and case sealant regions with YOLO, evaluates the detected sealant crops with OpenCV, and sends commands to a PATLITE USB signal tower. The trained model's class names remain `carrier` and `sealant`; each case contributes a sealant inspection region.
 
 ## How detection works
 
@@ -12,7 +12,11 @@ YOLO finds a carrier and sealant boxes
 Carrier center is in the lower half of the image
 and its position stays stable for about one second
          |
-Continuously analyze all four detected sealant crops while the board is present
+Carrier center inside the configured ROI? -- No --> CAMERA_ERROR; press C after realigning
+         |
+        Yes
+         |
+Continuously analyze all four case sealant crops while the carrier is present
          |
 Any evaluated crop fails? ---- Yes ---> NG: RED + buzzer
          |
@@ -20,10 +24,10 @@ Any evaluated crop fails? ---- Yes ---> NG: RED + buzzer
          |
     Pass: GREEN
          |
-Keep the result live; red can change to green when all four modules pass
+Keep the result live; red can change to green when all four cases pass
 Optionally press M for manual review
          |
-Carrier or sealant class disappears for at least 5 processed frames
+Carrier disappears for at least 5 processed frames
 AND result has been held for at least 2 seconds
          |
 Save review records; return to YELLOW for the next carrier
@@ -31,7 +35,9 @@ Save review records; return to YELLOW for the next carrier
 
 YOLO locates objects; it does **not** directly classify sealant quality in this program. For each crop, OpenCV groups lightness values into three clusters, selects the brightest cluster, finds its largest external contour, and tests the approximated contour for convexity. A failed evaluated contour makes the entire carrier NG.
 
-The one-second stability estimate uses processed frames divided by configured FPS. YOLO and quality analysis continue while the carrier remains present, so a temporary red result caused by an obstruction can recover to green when all four modules are detected and pass together. Thresholds are configurable.
+The one-second stability estimate uses processed frames divided by configured FPS. YOLO and quality analysis continue while the carrier remains present, so a temporary red result caused by an obstruction can recover to green when all four cases are detected and pass together. Set `DETECTION_SETTINGS.expected_case_count` for the number of cases on a carrier (default 4). Older INI files using `expected_module_count` are still accepted.
+
+Before starting case inspection, the stopped carrier center must be inside the `[CAMERA_HEALTH]` ROI in `config/config.ini`. By default it covers the central 50% of the image (`x=0.25`, `y=0.25`, `width=0.50`, `height=0.50`, as frame ratios). An outside center latches `CAMERA_ERROR`, skips inspection, requests steady yellow Standby, and displays a blinking red border with “Camera Out of Alignment!” and a C-key reset hint. Removing the carrier does not clear the error. After correcting alignment, press **C** to reset; a fresh stability period and ROI check are required before inspection resumes. Detection and reset events are logged, including the center/ROI and error duration. This position check infers possible misalignment; it does not measure camera angle. Blink interval, font scale, and border thickness are configurable in the same section.
 
 ### Four inspection locations: current limitations
 
@@ -40,10 +46,10 @@ The application now requires exactly four detected regions for Pass, but it does
 | YOLO output | Current behavior |
 | --- | --- |
 | Four separate sealant boxes | Analyze each box; any evaluated failure makes the carrier NG. |
-| Three passing boxes | NG; all four configured module regions are required for Pass. |
+| Three passing boxes | NG; all four configured case regions are required for Pass. |
 | One large box containing four sealants | Analyze only the largest contour within that crop, not four separate locations. |
-| Empty crop, missing contour or caught crop error | NG; an unanalysed module cannot contribute to Pass. |
-| Carrier with no sealant class | Do not trigger a new inspection; after absence tolerance, return to/remain in standby. |
+| Empty crop, missing contour or caught crop error | NG; an unanalysed case cannot contribute to Pass. |
+| Carrier with no sealant class | After stability and ROI checks, NG because the carrier has no detected case sealant regions. |
 
 The function historically named “closed loop” actually uses `cv2.isContourConvex()`. This is a shape heuristic, not a direct gap-width or continuity measurement. Sealant boxes are not filtered for containment inside the selected carrier. Review labels follow detector order, not fixed physical positions.
 
@@ -143,6 +149,7 @@ There is one application, not one process per module. Background capture and inf
 | `r` | Reset processing counters. |
 | `V` / `v` | Toggle video recording. |
 | `M` / `m` | Open manual review during `RESULT_HOLD`. |
+| `C` / `c` | Reset a latched camera alignment error after correcting alignment. |
 | Enter / ESC | Confirm / cancel in the review window. |
 
 Review borders: green = agree with Pass, red = agree with NG, yellow = disagree. Confirmation stores choices for the rejudge CSV. Cancellation restores agreement with the original result. A changed review result does **not** change the tower light or original inspection statistics.

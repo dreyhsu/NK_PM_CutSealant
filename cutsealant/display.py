@@ -192,8 +192,13 @@ class Display:
             font_scale = 0.55
             thickness = 1
 
+            if ctx.detection_state == 'CAMERA_ERROR':
+                self._draw_camera_error_overlay(display_frame)
+
             # --- Bottom bar: general shortcuts (white, always visible) ---
             shortcut_text = "[Q] Quit  [S] Screenshot  [F] Fit Screen  [G] Fullscreen  [P] Statistics  [R] Reset  [V] Recording"
+            if ctx.detection_state == 'CAMERA_ERROR':
+                shortcut_text = '[C] Reset camera alignment error  |  [Q] Quit'
             text_size = cv2.getTextSize(shortcut_text, font, font_scale, thickness)[0]
             bar_x = (dw - text_size[0]) // 2
             bar_y = dh - 12
@@ -226,6 +231,34 @@ class Display:
             print(error_msg)
             if ctx.logger:
                 ctx.logger.log_error("display_error", e)
+
+    def _draw_camera_error_overlay(self, frame):
+        """Blink a proportional red border and centered warning after resizing."""
+        ctx = self.context
+        cfg = ctx.camera_health_config
+        interval = cfg.get('alert_blink_interval', 0.5)
+        elapsed = ctx.clock.time() - ctx.camera_error_start_time
+        if elapsed % (interval * 2) >= interval:
+            return
+        h, w = frame.shape[:2]
+        border = max(1, int(min(w, h) * cfg.get('alert_border_thickness_ratio', 0.012)))
+        cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), border)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        text = 'Camera Out of Alignment!'
+        scale = max(0.6, np.hypot(w, h) / 2203 * cfg.get('alert_font_scale_ratio', 0.04) * 25)
+        # Keep the complete alert readable even in a narrow display window.
+        text_width = cv2.getTextSize(text, font, scale, 2)[0][0]
+        scale = min(scale, scale * max(1, w - 28) / max(1, text_width))
+        thickness = max(1, int(scale * 2))
+        (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
+        x, y = (w - tw) // 2, (h + th) // 2
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (max(0, x - 14), max(0, y - th - 14)),
+                      (min(w - 1, x + tw + 14), min(h - 1, y + baseline + 14)),
+                      (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
+        cv2.putText(frame, text, (x, y), font, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+        cv2.putText(frame, text, (x, y), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
     def _toggle_fit_screen(self):
         """Toggle fit screen mode on/off"""
@@ -378,6 +411,9 @@ class Display:
         thickness = max(1, round(2 * scale))
 
         def text(value, tx, ty, color=PANEL_WHITE, size=font_scale):
+            available_width = max(1, x + panel_width - 12 - tx)
+            text_width = cv2.getTextSize(value, cv2.FONT_HERSHEY_SIMPLEX, size, thickness)[0][0]
+            size *= min(1, available_width / max(1, text_width))
             cv2.putText(
                 frame,
                 value,
