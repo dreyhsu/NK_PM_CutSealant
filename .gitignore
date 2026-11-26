@@ -28,3 +28,5 @@ models/
 .env
 .env.*
 test.tmp
+
+/video
