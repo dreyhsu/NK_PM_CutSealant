@@ -9,9 +9,10 @@ import pytest
 def test_config_defaults_and_supplied_ini(legacy, tmp_path):
     config = legacy.ConfigManager(str(tmp_path / "new.ini"))
     assert config.get_device() == "cpu"
-    assert config.get_classes() == {"carrier": 0, "sealant": 1}
+    assert config.get_classes() == {"case": 0, "cover": 1, "base": 2, "carrier": 3}
     root = Path(__file__).resolve().parents[1]
     supplied = legacy.ConfigManager(str(root / "config" / "config.ini"))
+    assert supplied.get_classes() == {"case": 0, "cover": 1, "base": 2, "carrier": 3}
     assert supplied.get_device() == "cuda:0"
     assert supplied.get_detection_config()["absent_tolerance_frames"] == 5
     assert supplied.get_rejudge_config()["review_window_padding"] == 50
@@ -53,7 +54,29 @@ def test_custom_nested_config_creates_parent_directories(tmp_path):
     path = tmp_path / "custom" / "nested" / "settings.ini"
     config = ConfigManager(path)
     assert path.is_file()
-    assert config.get_classes() == {"carrier": 0, "sealant": 1}
+    assert config.get_classes() == {"case": 0, "cover": 1, "base": 2, "carrier": 3}
+
+
+def test_legacy_model_class_names_remain_compatible(tmp_path):
+    from cutsealant.config import ConfigManager
+
+    path = tmp_path / 'legacy.ini'
+    path.write_text('[CLASSES]\ncarrier = 0\nsealant = 1\n')
+    assert ConfigManager(path).get_classes() == {'carrier': 0, 'sealant': 1, 'case': 1}
+
+
+@pytest.mark.parametrize('settings', [
+    'carrier = 3\ncover = 1',
+    'case = 0',
+    'case = 0\ncarrier = 0',
+])
+def test_invalid_inspection_class_mapping_is_rejected(tmp_path, settings):
+    from cutsealant.config import ConfigManager
+
+    path = tmp_path / 'invalid.ini'
+    path.write_text('[CLASSES]\n' + settings + '\n')
+    with pytest.raises(ValueError, match='CLASSES'):
+        ConfigManager(path).get_classes()
 
 
 def test_json_and_error_log_contents(legacy, tmp_path):

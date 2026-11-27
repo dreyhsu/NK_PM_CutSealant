@@ -112,7 +112,7 @@ class Display:
                     cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, 2)
                     #cv2.putText(frame, 'carrier', (box[0], box[1]-10),
                     #           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-            elif category == ctx.class_map.get('sealant', 1):
+            elif category == ctx.class_map['case']:
                 index = ctx.workflow.position_index(correct_carrier_box, box)
                 if index is None:
                     continue

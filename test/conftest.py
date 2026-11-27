@@ -73,7 +73,7 @@ def isolated_io(monkeypatch, tmp_path):
 def processor(legacy):
     p = legacy.SafeVideoProcessor()
     p.paths = {"stack_light_path": "LR6main.py", "validation_path": "./validation/"}
-    p.class_map = {"carrier": 0, "sealant": 1}
+    p.class_map = {"carrier": 0, "case": 1}
     p.detection_config = {
         "fps": 15, "stop_threshold_seconds": 1,
         "distance_threshold_pixels": 10, "kmeans_clusters": 3,

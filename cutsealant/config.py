@@ -88,8 +88,10 @@ class ConfigManager:
         }
 
         self.config['CLASSES'] = {
-            'carrier': '0',
-            'sealant': '1'
+            'case': '0',
+            'cover': '1',
+            'base': '2',
+            'carrier': '3'
         }
 
         # Add logging settings
@@ -255,10 +257,16 @@ class ConfigManager:
         return options
 
     def get_classes(self):
-        """Get class configuration"""
+        """Get model class IDs, accepting sealant as the legacy case name."""
         classes = {}
         for name, index in self.config['CLASSES'].items():
             classes[name] = int(index)
+        if 'case' not in classes and 'sealant' in classes:
+            classes['case'] = classes['sealant']
+        if 'case' not in classes or 'carrier' not in classes:
+            raise ValueError('CLASSES must define case (or legacy sealant) and carrier')
+        if classes['case'] == classes['carrier']:
+            raise ValueError('CLASSES case and carrier must have different IDs')
         return classes
 
     def get_logging_config(self):

@@ -6,6 +6,34 @@ import numpy as np
 import pytest
 
 
+@pytest.mark.parametrize('include_case', [True, False])
+def test_retrained_model_inspects_only_case_class(rig, frame, include_case):
+    rig.p.class_map = {'case': 0, 'cover': 1, 'base': 2, 'carrier': 3}
+    boxes = np.array([[10, 110, 190, 190], [120, 120, 150, 140],
+                      [20, 160, 50, 180]], dtype=np.int32)
+    categories = np.array([3, 1, 2])
+    if include_case:
+        boxes = np.vstack([boxes, [20, 120, 50, 140]])
+        categories = np.append(categories, 0)
+    scores = np.full(len(boxes), .9)
+    assert np.array_equal(rig.p._check_correct_carrier(categories, boxes), boxes[0])
+    drawn_cases = rig.p._draw_detections(frame.copy(), boxes, categories, boxes[0])
+    assert len(drawn_cases) == int(include_case)
+
+    for _ in range(10):
+        rig.p.frame_count += 1
+        rig.state[:] = rig.p._handle_objects_present(
+            frame.copy(), frame, boxes, categories, drawn_cases, scores, *rig.state)
+
+    workflow = rig.p.workflow
+    assert set(workflow.positions) == ({0} if include_case else set())
+    assert workflow.ready == include_case
+    assert rig.judge.call_count == (10 if include_case else 0)
+    if include_case:
+        assert workflow.positions[0].bbox == [20, 120, 50, 140]
+        assert workflow.positions[0].crop.shape == (20, 30, 3)
+
+
 @pytest.mark.parametrize('slots', [(0,), (1, 3), (0, 2, 3), (3, 1, 0, 2)])
 def test_each_discovered_case_needs_ten_consecutive_passes(rig, slots):
     for _ in range(9):

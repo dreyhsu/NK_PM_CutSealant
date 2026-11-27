@@ -272,7 +272,7 @@ class InspectionWorkflow:
         self.last_processed_frame = ctx.frame_count
         candidates = {}
         for n, (box, category) in enumerate(zip(boxes, categories)):
-            if category != ctx.class_map['sealant']:
+            if category != ctx.class_map['case']:
                 continue
             index = self.position_index(carrier, box)
             if index is None or box[2] <= box[0] or box[3] <= box[1]:

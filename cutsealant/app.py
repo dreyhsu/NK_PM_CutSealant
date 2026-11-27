@@ -451,7 +451,7 @@ class SafeVideoProcessor:
                 carrier_present = self.class_map['carrier'] in detected_classes
                 case_count = sum(
                     1 for category in categories
-                    if category == self.class_map['sealant']
+                    if category == self.class_map['case']
                 )
 
                 if carrier_present:

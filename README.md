@@ -1,6 +1,6 @@
 # CutSealant inspection
 
-Python application for inspecting sealant on cases carried on a carrier. It reads a camera or video, locates the carrier and case sealant regions with YOLO, evaluates the detected sealant crops with OpenCV, and sends commands to a PATLITE USB signal tower. The trained model's class names remain `carrier` and `sealant`; each case contributes a sealant inspection region.
+Python application for inspecting sealant on cases carried on a carrier. It reads a camera or video, locates the carrier and cases with YOLO, evaluates the detected case crops with OpenCV, and sends commands to a PATLITE USB signal tower. The retrained model's classes are `case` (0), `cover` (1), `base` (2), and `carrier` (3). Each `case` supplies the crop for sealant inspection; `cover` and `base` do not contribute inspection results or position counts. Configure IDs in `[CLASSES]`; older configurations using `sealant` instead of `case` remain supported.
 
 ## YOLO inference area
 
