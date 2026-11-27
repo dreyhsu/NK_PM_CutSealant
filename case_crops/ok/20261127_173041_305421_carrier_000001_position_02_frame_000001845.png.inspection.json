@@ -1,0 +1,33 @@
+{
+  "image": "D:\\Dre\\NK_PM_CutSealant\\case_crops\\ok\\20261127_173041_305421_carrier_000001_position_02_frame_000001845.png",
+  "result": "Pass",
+  "error": "",
+  "kmeans_clusters": 3,
+  "kmeans_rounds": 10,
+  "rng_seed": 42,
+  "cluster_centers": [
+    187,
+    39,
+    85
+  ],
+  "contour_area": 6259.5,
+  "judged_polygon": [
+    [
+      66,
+      0
+    ],
+    [
+      8,
+      4
+    ],
+    [
+      11,
+      120
+    ],
+    [
+      61,
+      117
+    ]
+  ],
+  "overlay": "D:\\Dre\\NK_PM_CutSealant\\case_crops\\ok\\20261127_173041_305421_carrier_000001_position_02_frame_000001845.png.inspection.png"
+}
