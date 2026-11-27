@@ -9,6 +9,7 @@ import pytest
 from cutsealant.app import SafeVideoProcessor
 from cutsealant.config import ConfigManager
 from cutsealant.camera import CameraSource
+from cutsealant.roi import InferenceROI
 
 
 def test_initialize_with_injected_model_camera_and_no_logs(tmp_path, frame):
@@ -124,6 +125,7 @@ def test_capture_failure_stops_after_threshold_without_waiting(processor):
 
 
 def test_yolo_outputs_and_prediction_settings(processor, frame):
+    processor.inference_roi = InferenceROI((200, 200), (0, 0, 200, 200))
     processor.yolo_config = {"confidence_threshold": .8, "iou_threshold": .45, "max_detections": 100,
                              "use_augmentation": False, "use_half_precision": True}
     def tensor(value):
@@ -144,6 +146,7 @@ def test_yolo_outputs_and_prediction_settings(processor, frame):
 
 @pytest.mark.parametrize("raises", [False, True])
 def test_empty_or_failed_yolo_returns_empty_arrays(processor, frame, raises):
+    processor.inference_roi = InferenceROI((200, 200), (0, 0, 200, 200))
     processor.yolo_config = {"confidence_threshold": .8, "iou_threshold": .45, "max_detections": 100,
                              "use_augmentation": False, "use_half_precision": True}
     processor.model = Mock()

@@ -139,11 +139,17 @@ class YoloDetector:
             return False
 
     def _yolo_detect(self, frame):
-        """YOLO detection with error handling"""
+        """Infer only the ROI, returning boxes in original full-frame coordinates."""
         ctx = self.context
         try:
+            if ctx.inference_roi is None:
+                raise ValueError('Inference ROI must be loaded before detection')
+            x1, y1, x2, y2 = ctx.inference_roi.scaled_bounds(frame.shape)
+            crop = frame[y1:y2, x1:x2].copy()
+            if crop.size == 0:
+                raise ValueError('Inference ROI crop is empty')
             results = ctx.model.predict(
-                frame,
+                crop,
                 conf=ctx.yolo_config['confidence_threshold'],
                 iou=ctx.yolo_config['iou_threshold'],
                 agnostic_nms=False,
@@ -155,9 +161,15 @@ class YoloDetector:
 
             if len(results) > 0 and results[0].boxes is not None:
                 result = results[0]
-                boxes = result.boxes.xyxy.cpu().numpy().astype(np.int32)
+                boxes = result.boxes.xyxy.cpu().numpy().copy()
                 scores = result.boxes.conf.cpu().numpy()
                 categories = result.boxes.cls.cpu().numpy().astype(np.int32)
+                boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, x2 - x1)
+                boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, y2 - y1)
+                boxes = boxes.astype(np.int32)
+                valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+                boxes, scores, categories = boxes[valid], scores[valid], categories[valid]
+                boxes += np.array([x1, y1, x1, y1], dtype=np.int32)
             else:
                 boxes = np.array([]).reshape(0, 4)
                 scores = np.array([])

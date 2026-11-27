@@ -90,6 +90,7 @@ class SafeVideoProcessor:
         self.config_manager = None
         self.paths = {}
         self.yolo_config = {}
+        self.inference_roi = None
         self.detection_config = {}
         self.display_config = {}
         self.device = 'cpu'
@@ -165,6 +166,7 @@ class SafeVideoProcessor:
             self.config_manager = ConfigManager()
             self.paths = self.config_manager.get_paths()
             self.yolo_config = self.config_manager.get_yolo_config()
+            self.inference_roi = self.config_manager.get_inference_roi()
             self.detection_config = self.config_manager.get_detection_config()
             self.camera_health_config = self.config_manager.get_camera_health_config()
             self.display_config = self.config_manager.get_display_config()
@@ -185,6 +187,10 @@ class SafeVideoProcessor:
                 config_data = {
                     "paths": self.paths,
                     "yolo_config": self.yolo_config,
+                    "inference_roi": {
+                        "reference_size": list(self.inference_roi.reference_size),
+                        "roi_xyxy": list(self.inference_roi.roi_xyxy),
+                    },
                     "detection_config": self.detection_config,
                     "camera_health_config": self.camera_health_config,
                     "display_config": self.display_config,

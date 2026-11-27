@@ -31,6 +31,8 @@ Carrier position must remain stable before judging unfinished cases. Stability u
 
 ## Position assignment and observations
 
+YOLO runs only on the scaled crop in `config/inference_roi.json`. The version-1 JSON stores `[width, height]` reference dimensions and `[left, top, right, bottom]` crop bounds. A thick yellow outline uses the same scaled bounds for carrier placement. Crop-local output boxes are clipped and offset back into original-frame coordinates; workflow alignment checks and original-resolution sealant crops continue in that coordinate system. The original frame stays in the worker result queue. Missing/invalid ROI configuration blocks startup, with no whole-frame fallback.
+
 Use case center coordinates normalized against the selected (largest detected) carrier bounding box. Positions are 01 top-left, 02 top-right, 03 bottom-left and 04 bottom-right. Centers on the dividing lines belong to right/bottom; centers outside the carrier are ignored. Duplicate candidates within one quadrant are ranked by descending confidence, then ascending area. Only one observation per position per processed result is allowed.
 
 Each position remembers its relative/absolute box, counters, decision source, latest usable crop, confidence and evidence frame. The inspector receives the original frame and returns an independent Pass, NG or Unavailable observation for one crop. The existing HLS/K-means/convexity heuristic and YOLO sizing are unchanged. No contour in a usable crop is NG; unusable crops and calculation errors are Unavailable.

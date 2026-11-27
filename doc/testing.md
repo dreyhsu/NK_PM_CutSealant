@@ -13,6 +13,7 @@ Tests use real NumPy/OpenCV image calculations with simulated model, capture, US
 
 | Behavior | Automated coverage |
 | --- | --- |
+| Crop-only model input at reference/scaled resolutions; original-coordinate box restoration/clipping; unchanged raw frame; thick yellow ROI overlay; invalid/missing ROI prevents inference | `test_inference_roi.py`, `test_camera_detector.py` |
 | One to four remembered quadrants; arbitrary discovery order, relative motion/jitter, center boundaries, confidence/area duplicate ranking, outside boxes | `test_workflow.py` |
 | Nine Pass observations remain pending; tenth passes; missing/Unavailable/NG/movement reset streaks; five NG observations request review; custom thresholds | `test_workflow.py`, `test_logs_config.py` |
 | Passed cases survive covering and skip further judgment; new positions withdraw readiness; zero cases cannot pass | `test_workflow.py` |
@@ -28,7 +29,7 @@ The original extraction was checked against 38 historical characterization cases
 
 ## Manual acceptance with the production camera and model
 
-1. Load carriers with one through four cases in different quadrants. Verify IDs 01 top-left, 02 top-right, 03 bottom-left and 04 bottom-right, including a partially loaded carrier with only 02/04.
+1. Verify that the thick yellow outline matches the configured inference crop at the deployed resolution; place the carrier inside it. Load carriers with one through four cases in different quadrants. Verify IDs 01 top-left, 02 top-right, 03 bottom-left and 04 bottom-right, including a partially loaded carrier with only 02/04.
 2. Observe progress to 10 passing processed results. Briefly block an unfinished case: its counter resets, while already passed cases remain passed. Move the carrier and verify a fresh stability interval before unfinished checks resume.
 3. Produce five consecutive evaluated failures. Verify the case is marked for manual check without opening a window. Press M and verify that the popup shows the correct position and its failure image. Confirm NG, correct the case, and verify automatic results cannot clear it; press M and manually approve it. Cancel and close the popup separately, confirming neither action passes the case or repeatedly reopens it.
 4. Fail another case while the first popup remains open. Confirm or cancel the first review and verify that no new popup opens. Press M again and verify it contains the later case's own evidence. Check keyboard and mouse confirmation and fullscreen restoration.

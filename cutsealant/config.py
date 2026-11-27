@@ -1,7 +1,11 @@
-"""INI configuration; paths retain their original working-directory semantics."""
+"""INI settings and adjacent inference ROI JSON; existing path semantics remain."""
 import configparser
+import json
 import math
 import os
+from pathlib import Path
+
+from .roi import DEFAULT_INFERENCE_ROI, InferenceROI
 
 
 class ConfigManager:
@@ -123,6 +127,13 @@ class ConfigManager:
         # Save default config
         with open(self.config_file, 'w') as f:
             self.config.write(f)
+        roi_path = Path(self.config_file).with_name('inference_roi.json')
+        if not roi_path.exists():
+            roi_path.write_text(json.dumps(DEFAULT_INFERENCE_ROI, indent=2) + '\n', encoding='utf-8')
+
+    def get_inference_roi(self):
+        """Load the crop next to the active INI; no whole-frame fallback."""
+        return InferenceROI.load(Path(self.config_file).with_name('inference_roi.json'))
 
     def get_paths(self):
         """Get all path configurations"""

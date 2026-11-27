@@ -484,3 +484,15 @@ class Display:
             cv2.line(frame, (w//2, h//2-20), (w//2, h//2+20), (255, 255, 255), 1)
 
         self._draw_workflow_panel(frame, current_status)
+        self._draw_inference_roi(frame)
+
+    def _draw_inference_roi(self, frame):
+        """Use exactly the detector's scaled crop as the yellow placement outline."""
+        roi = getattr(self.context, 'inference_roi', None)
+        if roi is None:
+            return
+        x1, y1, x2, y2 = roi.scaled_bounds(frame.shape)
+        height, width = frame.shape[:2]
+        thickness = max(4, round(6 * min(width / roi.reference_size[0],
+                                       height / roi.reference_size[1])))
+        cv2.rectangle(frame, (x1, y1), (x2 - 1, y2 - 1), (0, 255, 255), thickness)

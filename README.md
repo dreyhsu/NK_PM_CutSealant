@@ -2,6 +2,24 @@
 
 Python application for inspecting sealant on cases carried on a carrier. It reads a camera or video, locates the carrier and case sealant regions with YOLO, evaluates the detected sealant crops with OpenCV, and sends commands to a PATLITE USB signal tower. The trained model's class names remain `carrier` and `sealant`; each case contributes a sealant inspection region.
 
+## YOLO inference area
+
+YOLO receives only the crop configured in [`config/inference_roi.json`](config/inference_roi.json):
+
+```json
+{
+  "version": 1,
+  "reference_size": [1344, 756],
+  "roi_xyxy": [454, 312, 850, 670]
+}
+```
+
+`reference_size` is `[width, height]`; `roi_xyxy` is `[left, top, right, bottom]` with exclusive right/bottom bounds. At the reference resolution this is a **396 × 358** crop. Coordinates scale independently with the actual frame width and height: left/top round down, right/bottom round up. The model's normal internal resizing still applies to this crop; the whole frame is never passed to YOLO.
+
+A thick yellow rectangle shows this same area on the full-frame display and annotated recordings. It guides carrier placement. Crop-relative detections are clipped to the crop and translated back to full-frame coordinates before case assignment, sealant judgment, review and drawing. Sealant quality still uses original-resolution pixels; raw recording remains unannotated. The existing camera-alignment ROI and lower-half stop check remain separate checks in full-frame coordinates.
+
+The JSON is loaded beside the active INI at startup; restart after editing it. Missing or invalid crop configuration stops initialization instead of falling back to whole-frame inference. Creating a new default INI also creates the default ROI JSON if it is absent; it never overwrites an existing ROI file.
+
 ## How detection works
 
 Each carrier cycle remembers up to four case positions relative to the selected carrier bounding box:
@@ -41,7 +59,7 @@ A case hidden for the entire cycle cannot be known to the system. Carrier absenc
 
 ## Install and run
 
-Python **3.12** is the development/test baseline. The active configuration is [`config/config.ini`](config/config.ini). Run commands from the repository root: configuration and relative paths are resolved against the current working directory. Paths inside the INI remain relative to the repository root, not the `config/` folder. If the configuration is missing, the application creates the folder and a default INI file.
+Python **3.12** is the development/test baseline. The active configuration is [`config/config.ini`](config/config.ini), with the inference crop in [`config/inference_roi.json`](config/inference_roi.json). Run commands from the repository root: configuration and relative paths are resolved against the current working directory. Paths inside the INI remain relative to the repository root, not the `config/` folder. If the configuration is missing, the application creates the folder and a default INI file.
 
 ### Windows PowerShell
 
