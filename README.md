@@ -122,6 +122,7 @@ The only `.exe` in the original delivery is a camera installer; it is not a comp
 | `cutsealant/camera.py` | Opens the source, captures frames and attempts camera reconnection. |
 | `cutsealant/detector.py` | Lazily loads YOLO, predicts object boxes/classes/confidence and runs the inference worker. |
 | `cutsealant/inspection.py` | Evaluates crops using lightness clustering and contour convexity. |
+| `inspect_case_images.py` | Rejudges saved case images without YOLO or hardware; saves contour overlays and JSON beside the originals. |
 | `cutsealant/workflow.py` | Owns carrier state and controls inspection triggers and result hold. |
 | `cutsealant/tower.py` | Schedules serialized PATLITE processes, timeouts, LED recovery and independent buzzer outcomes. |
 | `cutsealant/display.py` | Draws overlays, matches boxes, displays frames and handles screenshots/window sizing. |
@@ -168,8 +169,70 @@ With the supplied paths, outputs are:
 | `logs/rejudge/rejudge_YYYYMMDD.csv` | Per-sealant AI result, agreement, confidence and final `Pass`, `NG`, `REPASS` or `REFAIL`. |
 | `validation/` | Legacy validation-image helper output; active cycles keep evidence crops in memory for review. |
 | `screenshots/`, `recordings/` | User screenshots and optional recordings. |
+| `case_crops/ok/`, `case_crops/ng/` | Optional original-resolution case PNGs at automatic Pass / manual-check threshold. |
 
 Setting `save_detection_log = false` also disables creation of statistics and rejudge writers. Cycle audit records remain enabled in the configured log directory. Review CSV `sealant_index` is the zero-based quadrant index (0–3); display labels are 01–04. Partial cases are recorded as Pending or Manual check required, never as Pass based on a short streak. Heartbeats are emitted every 60 seconds. Missing frames produce warnings; video end does not automatically exit the main loop in the current monitoring implementation.
+
+## Saving and rejudging case images
+
+The supplied `config/config.ini` enables case crop saving. Turn it on or off here,
+then restart `main.py`:
+
+```ini
+[CASE_CROP_SAVING]
+enabled = true
+output_path = ./case_crops/
+```
+
+Saving is independent of detection logging and video recording. Older INIs without
+this section and newly generated default INIs leave it disabled. `output_path`
+is relative to the working directory, like other INI paths.
+
+Each case saves **one unannotated, original-resolution PNG** when its consecutive
+observations first reach a decision: automatic Pass goes to `ok/` (default 10
+passing observations), and Manual check required goes to `ng/` (default 5 NG
+observations). The saved image is the exact crop from the observation that reaches
+the threshold, also retained for review. Short streaks and Unavailable observations
+produce no saved crops. Names contain the session, carrier number, position 01–04
+and frame number. Saving errors are reported without stopping inspection.
+
+The folders describe the automatic decision. A later manual Pass keeps its
+original evidence in `ng/`; it does not create an `ok/` example. Continued frames,
+reopening review and manual confirmation do not save duplicate crops.
+
+Run the standalone script from the repository root with the Python environment
+activated:
+
+```bash
+# Process all images under the configured output_path, including ok/ and ng/.
+python inspect_case_images.py
+
+# Or process a folder or individual case crops.
+python inspect_case_images.py case_crops/ng
+python inspect_case_images.py case_crops/ok/example.png --config config/config.ini
+```
+
+This needs only NumPy and OpenCV; no model, camera, tower or display is opened.
+It uses the active INI's `kmeans_clusters` and `kmeans_rounds` and the same crop
+analysis as live inspection. For each `example.png`, it prints Pass, NG or
+Unavailable and writes beside the original:
+
+- `example.png.inspection.png`: largest external contour in cyan, the simplified
+  polygon used for judgment in green (Pass) or red (NG), and a result footer.
+- `example.png.inspection.json`: result, error if any, cluster centers, contour
+  area, crop-local polygon coordinates, algorithm settings and overlay path.
+
+The originals are preserved. Rerunning replaces the corresponding reports and
+overlays, and skips generated overlay images. Unreadable images get an Unavailable
+JSON report without an overlay; processing continues with other inputs. Exit code
+0 means processing succeeded, including evaluated NG images; 1 means an input
+could not be analyzed or written; 2 indicates invalid arguments/configuration.
+
+Offline runs reset OpenCV's random seed to 42 for each image for repeatable
+comparisons (`--seed` changes it). Live K-means uses random initial centers without
+this reset, so ambiguous images can differ from their original automatic result.
+The algorithm evaluates contour convexity; it does not directly measure sealant
+gaps or continuity.
 
 ## Tests
 

@@ -97,6 +97,7 @@ class SafeVideoProcessor:
         self.light_tower_config = {'mode': 'usb'}
         self.class_map = {}
         self.recording_config = {}
+        self.case_crop_config = {'enabled': False, 'output_path': './case_crops/'}
 
         # Video source info
         self.source_name = "Unknown"
@@ -174,6 +175,7 @@ class SafeVideoProcessor:
             self.light_tower_config = self.config_manager.get_light_tower_config()
             self.class_map = self.config_manager.get_classes()
             self.recording_config = self.config_manager.get_recording_config()
+            self.case_crop_config = self.config_manager.get_case_crop_config()
 
             # Initialize logger
             logging_config = self.config_manager.get_logging_config()
@@ -197,7 +199,8 @@ class SafeVideoProcessor:
                     "device": self.device,
                     "light_tower_config": self.light_tower_config,
                     "classes": self.class_map,
-                    "recording_config": self.recording_config
+                    "recording_config": self.recording_config,
+                    "case_crop_config": self.case_crop_config,
                 }
                 self.logger.log_configuration(config_data)
 

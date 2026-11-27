@@ -111,6 +111,11 @@ class ConfigManager:
             'quality': 'medium'  # 'low', 'medium', 'high'
         }
 
+        self.config['CASE_CROP_SAVING'] = {
+            'enabled': 'false',
+            'output_path': './case_crops/',
+        }
+
         self.config['CAMERA_HEALTH'] = {
             'roi_x_ratio': '0.25',
             'roi_y_ratio': '0.25',
@@ -206,6 +211,13 @@ class ConfigManager:
             'auto_fit_screen': self.config.getboolean('DISPLAY_SETTINGS', 'auto_fit_screen', fallback=True),
             'max_scale': self.config.getfloat('DISPLAY_SETTINGS', 'max_scale', fallback=1.0),
             'min_scale': self.config.getfloat('DISPLAY_SETTINGS', 'min_scale', fallback=0.1)
+        }
+
+    def get_case_crop_config(self):
+        """Optional decision crops; older configurations keep saving disabled."""
+        return {
+            'enabled': self.config.getboolean('CASE_CROP_SAVING', 'enabled', fallback=False),
+            'output_path': self.config.get('CASE_CROP_SAVING', 'output_path', fallback='./case_crops/'),
         }
 
     def get_camera_health_config(self):

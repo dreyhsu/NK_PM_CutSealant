@@ -1,7 +1,9 @@
 """Carrier cycles with persistent, carrier-relative case positions."""
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
+import cv2
 import numpy as np
 
 from .logs import CycleLogger
@@ -308,16 +310,37 @@ class InspectionWorkflow:
                 case.fail_streak = 0
                 if case.pass_streak >= ctx.detection_config.get('case_pass_consecutive_frames', 10):
                     case.status, case.decision_source = 'PASS', 'automatic'
+                    self._save_case_crop(case, 'ok')
             else:
                 case.fail_streak += 1
                 case.pass_streak = 0
                 if case.fail_streak >= ctx.detection_config.get('case_fail_consecutive_frames', 5):
                     case.status = 'REVIEW'
+                    self._save_case_crop(case, 'ng')
         for index, case in self.positions.items():
             if index not in candidates:
                 case.reset_streaks()
         ctx.current_raw_frame = frame.copy()
         self._sync_pending_review()
+
+    def _save_case_crop(self, case, folder):
+        """Save the threshold frame once; optional disk I/O must not stop inspection."""
+        ctx = self.context
+        if not ctx.case_crop_config.get('enabled', False):
+            return
+        path = Path(ctx.case_crop_config['output_path']) / folder / (
+            f'{self.audit_session_id}_carrier_{ctx.carrier_count:06d}'
+            f'_position_{case.index + 1:02d}_frame_{case.evidence_frame:09d}.png')
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            success, encoded = cv2.imencode('.png', case.crop)
+            if not success:
+                raise OSError('Could not encode case crop as PNG')
+            path.write_bytes(encoded.tobytes())
+        except Exception as exc:
+            print(f'[Case crops] Could not save {path}: {exc}')
+            if ctx.logger:
+                ctx.logger.log_error('case_crop_save_error', exc, {'path': str(path)})
 
     def _sync_pending_review(self):
         ctx = self.context

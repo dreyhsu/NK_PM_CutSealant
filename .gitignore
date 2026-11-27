@@ -23,6 +23,7 @@ logs/
 recordings/
 validation/
 screenshots/
+case_crops/
 models/
 .DS_Store
 .env

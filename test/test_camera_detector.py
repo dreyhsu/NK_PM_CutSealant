@@ -17,6 +17,7 @@ def test_initialize_with_injected_model_camera_and_no_logs(tmp_path, frame):
     config.config["PATHS"]["model_path"] = str(tmp_path / "fake.pt")
     config.config["VIDEO_SOURCE"]["mode"] = "camera"
     config.config["LOGGING_SETTINGS"]["save_detection_log"] = "false"
+    config.config['CASE_CROP_SAVING'] = {'enabled': 'true', 'output_path': './my_crops/'}
     with open(config.config_file, "w") as f:
         config.config.write(f)
     (tmp_path / "fake.pt").touch()
@@ -37,6 +38,7 @@ def test_initialize_with_injected_model_camera_and_no_logs(tmp_path, frame):
         assert p.cap is p.camera.capture is cap
         assert p.frame_queue.get_nowait() is frame
         assert p.logger is p.statistics_logger is p.rejudge_logger is None
+        assert p.case_crop_config == {'enabled': True, 'output_path': './my_crops/'}
         assert not (tmp_path / "logs").exists()
     finally:
         p.stop()

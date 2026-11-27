@@ -11,6 +11,17 @@ class InspectionResult:
     by_box: dict[str, bool]
 
 
+@dataclass(frozen=True)
+class CropAnalysis:
+    """One crop's judgment and the exact segmentation/contours behind it."""
+    result: str
+    mask: object = None
+    contour: object = None
+    approximation: object = None
+    centers: object = None
+    error: str = ''
+
+
 class SealantInspector:
     """Composed service; context supplies shared application interfaces."""
 
@@ -34,22 +45,34 @@ class SealantInspector:
             height, width = frame.shape[:2]
             if not (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height):
                 return 'Unavailable'
-            crop = frame[y1:y2, x1:x2]
+            return self.analyze_crop(frame[y1:y2, x1:x2]).result
+        except Exception as exc:
+            if ctx.logger:
+                ctx.logger.log_error('sealant_observation_error', exc, {'box': list(map(int, box))})
+            return 'Unavailable'
+
+    def analyze_crop(self, crop):
+        """Shared live/offline algorithm; coordinates in returned contours are crop-local."""
+        ctx = self.context
+        try:
+            if crop is None or crop.size == 0:
+                return CropAnalysis('Unavailable', error='Empty or unreadable image')
             lightness = cv2.cvtColor(crop, cv2.COLOR_BGR2HLS)[:, :, 1]
             if lightness.size < ctx.detection_config['kmeans_clusters']:
-                return 'Unavailable'
+                return CropAnalysis('Unavailable', error='Fewer pixels than K-means clusters')
             segmented, centers = ctx._img_kmeans(lightness)
             brightest = int(np.max(centers))
             mask = cv2.inRange(segmented, brightest, brightest)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             if not contours:
-                return 'NG'
+                return CropAnalysis('NG', mask=mask, centers=centers)
             contour = max(contours, key=cv2.contourArea)
-            return 'Pass' if ctx._loop_closed_identify(contour) else 'NG'
+            result = 'Pass' if ctx._loop_closed_identify(contour) else 'NG'
+            return CropAnalysis(result, mask, contour, self._approximate_contour(contour), centers)
         except Exception as exc:
             if ctx.logger:
-                ctx.logger.log_error('sealant_observation_error', exc, {'box': list(map(int, box))})
-            return 'Unavailable'
+                ctx.logger.log_error('sealant_observation_error', exc)
+            return CropAnalysis('Unavailable', error=str(exc))
 
     def _cut_sealant_detection(self, frame, boxes):
         """Detect if sealant is properly cut and store individual results"""
@@ -98,12 +121,16 @@ class SealantInspector:
 
     def _loop_closed_identify(self, cnt):
         """Check if contour is a closed loop"""
-        ctx = self.context
+        approx = self._approximate_contour(cnt)
+        return False if approx is None else cv2.isContourConvex(approx)
+
+    @staticmethod
+    def _approximate_contour(cnt):
+        """The same polygon is used for judgment and the offline contour overlay."""
         if len(cnt) < 3:
-            return False
+            return None
         epsilon = 0.02 * cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, epsilon, True)
-        return cv2.isContourConvex(approx)
+        return cv2.approxPolyDP(cnt, epsilon, True)
 
     def _img_kmeans(self, img):
         """K-means clustering for image segmentation"""
