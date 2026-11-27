@@ -538,7 +538,6 @@ class SafeVideoProcessor:
             if result in ('confirm', 'cancel'):
                 self._handle_review_complete(result)
         current_status = self.workflow.refresh_status(current_status)
-        self.review.open_queued()
         return current_status, stop_time, previous_centroid, False
 
     def stop(self):

@@ -140,7 +140,6 @@ class InspectionWorkflow:
         self.panel = WorkflowPanelState()
         self.positions = {}
         self.active = False
-        self.review_queue = set()
         self.last_processed_frame = None
         self.needs_stability = False
         self.carrier_missing = False
@@ -253,7 +252,6 @@ class InspectionWorkflow:
             return ctx._call_light_once('Standby'), 0, centroid
         self.active = True
         self.positions.clear()
-        self.review_queue.clear()
         self.panel.reset()
         self.carrier_missing = self.needs_stability = False
         ctx.carrier_count += 1
@@ -315,7 +313,6 @@ class InspectionWorkflow:
                 case.pass_streak = 0
                 if case.fail_streak >= ctx.detection_config.get('case_fail_consecutive_frames', 5):
                     case.status = 'REVIEW'
-                    self.review_queue.add(index)
         for index, case in self.positions.items():
             if index not in candidates:
                 case.reset_streaks()
@@ -412,7 +409,6 @@ class InspectionWorkflow:
         count = len(self.positions)
         ctx.review.close()
         self.positions.clear()
-        self.review_queue.clear()
         self.last_processed_frame = None
         self.needs_stability = self.carrier_missing = False
         self.state = InspectionState(carrier_count=ctx.carrier_count)

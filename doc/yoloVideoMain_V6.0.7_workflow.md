@@ -38,7 +38,7 @@ Each position remembers its relative/absolute box, counters, decision source, la
 | Position state | Observation/action | Result |
 | --- | --- | --- |
 | Checking | Pass | Increment Pass streak; clear NG streak; at configured threshold latch Automatic Pass. |
-| Checking | NG | Increment NG streak; clear Pass streak; at threshold latch Manual check required and queue saved failure evidence. |
+| Checking | NG | Increment NG streak; clear Pass streak; at threshold latch Manual check required and save failure evidence; press M to review. |
 | Checking | Missing/Unavailable/moving carrier | Reset both streaks; retain position membership. |
 | Manual check required / Confirmed NG | Automatic observation | No change; manual decision is required. |
 | Failed position in review | Agree with NG, then Confirm | Confirmed NG; M is required to recheck. |
@@ -50,7 +50,7 @@ Defaults in `[DETECTION_SETTINGS]`: `case_pass_consecutive_frames=10`, `case_fai
 
 ## Review and controls
 
-Only one review window is open at a time. It displays immutable crops from each position's failure frame, even if those failures occurred on different frames. Other cases keep checking. New failures queue for the next popup in ascending position order. Cancellation does not repeatedly reopen the same popup automatically. Review labels use stable Position 01–04 IDs.
+Only one review window is open at a time. It displays immutable crops from each position's failure frame, even if those failures occurred on different frames. Other cases keep checking. Review opens only when the operator presses M, showing unresolved failed positions in ascending position order. New failures retain their own evidence for the next M request. Confirming, cancelling or closing review never opens another popup automatically. Review labels use stable Position 01–04 IDs.
 
 A single `cv2.waitKey()` call in the main loop supplies all keyboard events. Review receives Enter/Escape events from that handler; X and Q take priority over unconfirmed edits. The handler also runs when no inference result arrives. Termination closes review, clears queued actions and buffered results, resets stability, and requests steady yellow. M reopens unresolved failed positions; C resets alignment errors; Q exits. Existing screenshot, recording, display and tower-retry controls remain supported.
 

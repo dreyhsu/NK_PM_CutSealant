@@ -372,25 +372,19 @@ class ManualReviewWindow:
 
 
 class ReviewController:
-    """Queue frozen failure evidence and apply decisions to stable position IDs."""
+    """Review saved failure evidence on request and apply position decisions."""
 
     def __init__(self, context):
         self.context = context
         self.review_cycle_id = None
         self.review_indices = []
 
-    def open_queued(self):
-        workflow = self.context.workflow
-        if workflow.review_queue:
-            self._open_manual_review(automatic=True)
-
-    def _open_manual_review(self, automatic=False):
+    def _open_manual_review(self):
         ctx = self.context
         workflow = ctx.workflow
         if not workflow.active or (ctx.manual_review_window and ctx.manual_review_window.is_open):
             return
-        indices = sorted(i for i, case in workflow.positions.items()
-                         if case.needs_review and (not automatic or i in workflow.review_queue))
+        indices = sorted(i for i, case in workflow.positions.items() if case.needs_review)
         cases = [workflow.positions[i] for i in indices if workflow.positions[i].crop is not None]
         if not cases:
             return
@@ -407,7 +401,6 @@ class ReviewController:
         if ctx.manual_review_window.open_cases(records):
             self.review_cycle_id = ctx.carrier_count
             self.review_indices = [case.index for case in cases]
-            workflow.review_queue.difference_update(self.review_indices)
             if ctx.logger:
                 ctx.logger.log_system_event('manual_review_opened', {
                     'carrier_id': ctx.carrier_count,

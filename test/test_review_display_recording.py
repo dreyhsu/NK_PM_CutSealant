@@ -44,7 +44,7 @@ def test_manual_pass_updates_stable_position_and_tower(rig):
     rig.judge.return_value = 'NG'
     for _ in range(5):
         workflow = rig.feed((1, 3))
-    rig.p.review.open_queued()
+    rig.p._handle_key(ord('M'), *rig.state)
     window = rig.p.manual_review_window
     assert [s['position_id'] for s in window.sealant_states] == ['02', '04']
     for state in window.sealant_states:
@@ -73,7 +73,7 @@ def test_cancel_or_window_close_requires_m_without_popup_loop(rig, monkeypatch, 
     rig.judge.return_value = 'NG'
     for _ in range(5):
         workflow = rig.feed((2,))
-    rig.p.review.open_queued()
+    rig.p._handle_key(ord('M'), *rig.state)
     window = rig.p.manual_review_window
     if dismissal == 'close':
         monkeypatch.setattr(cv2, 'getWindowProperty', lambda *args: -1)
@@ -100,21 +100,26 @@ def test_cancel_or_window_close_requires_m_without_popup_loop(rig, monkeypatch, 
     assert rig.p._handle_key(13, *rig.state)[0] == 'Pass'
 
 
-def test_new_failures_queue_separate_frozen_evidence_while_window_open(rig):
+def test_later_failures_keep_evidence_and_require_another_m_press(rig):
     rig.judge.return_value = 'NG'
     for _ in range(5):
         workflow = rig.feed((0,))
-    rig.p.review.open_queued()
+    rig.p._handle_key(ord('M'), *rig.state)
     window = rig.p.manual_review_window
     first_crop = window.sealant_crops[0].copy()
     for _ in range(5):
         rig.feed((0, 3), image=np.full_like(rig.p.current_raw_frame, 80))
-        rig.p.review.open_queued()
+        rig.p._handle_key(255, *rig.state)
     assert window.sealant_states[0]['position_id'] == '01'
-    assert workflow.review_queue == {3}
+    assert workflow.positions[3].status == 'REVIEW'
     assert np.array_equal(window.sealant_crops[0], first_crop)
+    window.sealant_states[0]['user_agrees'] = False
     rig.p._handle_key(13, *rig.state)
-    assert workflow.positions[0].status == 'NG'
+    assert workflow.positions[0].passed
+    assert not window.is_open
+    rig.p._handle_key(255, *rig.state)
+    assert not window.is_open
+    rig.p._handle_key(ord('M'), *rig.state)
     assert window.is_open and window.sealant_states[0]['position_id'] == '04'
     assert np.all(window.sealant_crops[0] == 80)
     assert window.pending_action is None
@@ -124,14 +129,14 @@ def test_termination_wins_over_pending_review_confirmation(rig):
     rig.judge.return_value = 'NG'
     for _ in range(5):
         workflow = rig.feed((0,))
-    rig.p.review.open_queued()
+    rig.p._handle_key(ord('M'), *rig.state)
     window = rig.p.manual_review_window
     window.sealant_states[0]['user_agrees'] = False
     window._on_confirm()
     case = workflow.positions[0]
     rig.p._handle_key(ord('X'), *rig.state)
     assert not workflow.active and not window.is_open
-    assert window.pending_action is None and not workflow.review_queue
+    assert window.pending_action is None and not workflow.positions
     assert not case.passed
     rig.p._handle_review_complete('confirm')
     assert not workflow.active
@@ -212,10 +217,28 @@ def test_closed_review_cannot_confirm_from_main_window_enter(rig, monkeypatch):
     rig.judge.return_value = 'NG'
     for _ in range(5):
         workflow = rig.feed((0,))
-    rig.p.review.open_queued()
+    rig.p._handle_key(ord('M'), *rig.state)
     rig.p.manual_review_window.sealant_states[0]['user_agrees'] = False
     monkeypatch.setattr(cv2, 'getWindowProperty', lambda *args: -1)
     rig.p._handle_key(13, *rig.state)
     assert workflow.positions[0].status == 'REVIEW'
     assert not workflow.positions[0].user_reviewed
     assert not rig.p.manual_review_window.is_open
+
+
+def test_ng_marks_manual_check_without_opening_window_until_m(rig):
+    rig.judge.return_value = 'NG'
+    for _ in range(10):
+        workflow = rig.feed((1, 3))
+        rig.p._handle_key(255, *rig.state)
+    assert all(case.status == 'REVIEW' for case in workflow.positions.values())
+    assert rig.p.detection_result == 'NG'
+    assert rig.p.manual_review_window is None
+    rig.p._handle_key(ord('m'), *rig.state)
+    window = rig.p.manual_review_window
+    assert window.is_open
+    assert [state['position_id'] for state in window.sealant_states] == ['02', '04']
+    rig.p._handle_key(13, *rig.state)
+    assert not window.is_open
+    rig.p._handle_key(255, *rig.state)
+    assert not window.is_open

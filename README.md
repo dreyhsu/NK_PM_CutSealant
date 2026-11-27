@@ -14,7 +14,7 @@ Each carrier cycle remembers up to four case positions relative to the selected 
 1. Start in yellow Standby. When a carrier arrives, request blinking yellow Tracking.
 2. Wait for the carrier to stop in the lower image half and pass the configured camera-alignment ROI check.
 3. Discover occupied quadrants throughout the cycle. A detected case center assigns its position; detections outside the carrier are ignored. If several detections occupy the same quadrant, use the highest confidence, then the smaller area.
-4. For each unfinished automatic case, require 10 consecutive passing observations. Five consecutive NG observations automatically open manual review. Both thresholds are configurable in `[DETECTION_SETTINGS]`:
+4. For each unfinished automatic case, require 10 consecutive passing observations. Five consecutive NG observations mark the case as requiring manual check; press **M** to open review. Both thresholds are configurable in `[DETECTION_SETTINGS]`:
 
    ```ini
    case_pass_consecutive_frames = 10
@@ -22,7 +22,7 @@ Each carrier cycle remembers up to four case positions relative to the selected 
    ```
 
 5. Missing detections, unusable crops, or carrier movement/loss reset unfinished streaks. They do not create a new NG decision. Passed cases remain passed when covered by hands or metal, and are no longer judged.
-6. Manual review shows **Position 01–04**, using the saved image that caused the failure. Agreeing with NG confirms NG; disagreeing and confirming immediately produces Manual Pass. Confirmed NG requires another manual check with **M**; automatic passing frames cannot clear it. Cancel, Escape, or closing review leaves the case unresolved. Other positions continue checking while review is open; later failures queue for another popup.
+6. Manual review shows **Position 01–04**, using the saved image that caused the failure. Agreeing with NG confirms NG; disagreeing and confirming immediately produces Manual Pass. Confirmed NG requires another manual check with **M**; automatic passing frames cannot clear it. Cancel, Escape, or closing review leaves the case unresolved. Other positions continue checking while review is open; later failures keep their saved evidence for the next time the operator presses **M**. Review never opens automatically.
 7. When at least one case has been discovered and every discovered case passes, request green and show **Ready - remove carrier**. Discovery continues: a newly revealed case withdraws readiness until it passes.
 8. Close successfully only when the carrier disappears for `absent_tolerance_frames` processed results (default 5) and readiness has lasted `result_hold_min_seconds` (default 2). Zero visible cases while the carrier remains does not close the cycle.
 9. If the carrier disappears before readiness, hold its results and show **Cycle incomplete - restore carrier or press X**. Press **X** to terminate without confirmation, save partial results, clear review and case memory, and return to Standby. The same carrier can start a new cycle after a fresh stability period. Quit/shutdown records an active cycle as Interrupted.

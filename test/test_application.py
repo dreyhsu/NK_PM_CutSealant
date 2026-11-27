@@ -115,7 +115,7 @@ def test_two_carrier_sequence_pass_then_manual_ng(rig, monkeypatch):
         rig.feed((3,))
     assert rig.p.carrier_count == 2
     assert workflow.positions[3].needs_review
-    rig.p.review.open_queued()
+    rig.p._handle_key(ord('M'), *rig.state)
     assert rig.p.manual_review_window.is_open
     assert rig.p.manual_review_window.sealant_states[0]['position_id'] == '04'
     rig.p._handle_key(13, *rig.state)
@@ -185,13 +185,15 @@ def test_main_loop_single_key_pump_terminates_open_review_before_queued_frame(pr
     processor.rejudge_logger = Mock()
     boxes = np.array([[10, 110, 190, 190], [120, 160, 150, 180]], np.int32)
     scores, categories = np.array([.99, .9]), np.array([0, 1])
-    keys = iter([255]*21 + [ord('X'), ord('q')])
+    keys = iter([255]*21 + [ord('M'), ord('X'), ord('q')])
     observed = []
 
     def pump(_):
         key = next(keys)
         if key in (255, ord('X')):
             processor.result_queue.put((frame.copy(), boxes, scores, categories))
+        if key == ord('M'):
+            assert processor.manual_review_window is None
         if key == ord('X'):
             assert processor.manual_review_window.is_open
             processor.manual_review_window.sealant_states[0]['user_agrees'] = False
@@ -201,7 +203,7 @@ def test_main_loop_single_key_pump_terminates_open_review_before_queued_frame(pr
 
     monkeypatch.setattr(cv2, 'waitKey', pump)
     assert processor.run()
-    assert len(observed) == 23
+    assert len(observed) == 24
     assert processor.frame_count == 21  # X discards the queued 22nd result.
     assert judge.call_count == 5
     assert not processor.manual_review_window.is_open

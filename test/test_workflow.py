@@ -65,14 +65,15 @@ def test_interruption_resets_pass_streak_without_latching_failure(rig, interrupt
     assert case.pass_streak == 1
 
 
-def test_fifth_ng_queues_review_and_cannot_be_cleared_automatically(rig):
+def test_fifth_ng_requires_review_and_cannot_be_cleared_automatically(rig):
     rig.judge.return_value = 'NG'
     for _ in range(4):
         workflow = rig.feed((2,))
-    assert not workflow.review_queue
+    assert workflow.positions[2].status == 'CHECKING'
     rig.feed((2,))
     case = workflow.positions[2]
-    assert case.status == 'REVIEW' and workflow.review_queue == {2}
+    assert case.status == 'REVIEW'
+    assert rig.p.manual_review_window is None
     assert rig.state[0] == 'NG'
     evidence = case.crop.copy()
     calls = rig.judge.call_count
