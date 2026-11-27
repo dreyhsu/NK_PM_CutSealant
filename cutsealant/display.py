@@ -112,24 +112,17 @@ class Display:
                     cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, 2)
                     #cv2.putText(frame, 'carrier', (box[0], box[1]-10),
                     #           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-            else:
-                # This is a sealant
+            elif category == ctx.class_map.get('sealant', 1):
+                index = ctx.workflow.position_index(correct_carrier_box, box)
+                if index is None:
+                    continue
                 sealant_boxes.append(box)
-
-                # Determine color based on detection result using IoU matching
-                if ctx.detection_state == 'RESULT_HOLD' and ctx.sealant_detection_results:
-                    # Use IoU matching instead of exact coordinate matching
-                    matched_box_key = ctx._find_matching_box(box, ctx.sealant_detection_results.keys())
-                    if matched_box_key:
-                        is_broken = ctx.sealant_detection_results[matched_box_key]
-                        color = (0, 0, 255) if is_broken else (0, 255, 0)  # Red if broken, green if OK
-                        status_text = 'NG' if is_broken else 'OK'
-                        #cv2.putText(frame, status_text, (box[0], box[1]-25),
-                        #           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-
+                case = ctx.workflow.positions.get(index)
+                color = ((0, 255, 0) if case and case.passed else
+                         (0, 0, 255) if case and case.needs_review else (0, 255, 255))
                 cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, 2)
-                #cv2.putText(frame, 'sealant', (box[0], box[1]-10),
-                #           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+                cv2.putText(frame, f'Position {index + 1:02}', (box[0], max(20, box[1]-8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, .6, color, 2, cv2.LINE_AA)
 
         return sealant_boxes
 
@@ -196,7 +189,7 @@ class Display:
                 self._draw_camera_error_overlay(display_frame)
 
             # --- Bottom bar: general shortcuts (white, always visible) ---
-            shortcut_text = "[Q] Quit  [S] Screenshot  [F] Fit Screen  [G] Fullscreen  [P] Statistics  [R] Reset  [V] Recording"
+            shortcut_text = "[Q] Quit  [S] Screenshot  [F] Fit Screen  [G] Fullscreen  [P] Statistics  [R] Reset  [V] Recording  [M] Recheck  [X] Terminate"
             if ctx.detection_state == 'CAMERA_ERROR':
                 shortcut_text = '[C] Reset camera alignment error  |  [Q] Quit'
             text_size = cv2.getTextSize(shortcut_text, font, font_scale, thickness)[0]
@@ -208,8 +201,8 @@ class Display:
             cv2.putText(display_frame, shortcut_text, (bar_x, bar_y),
                         font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
-            # --- M key hint: center-right, blue, only in RESULT_HOLD ---
-            if ctx.detection_state == 'RESULT_HOLD':
+            # --- Manual recheck remains available during an active cycle. ---
+            if ctx.workflow.active:
                 m_text = "[M] Manual Review"
                 m_size = cv2.getTextSize(m_text, font, 0.75, 2)[0]
                 m_x = dw - m_size[0] - 30
@@ -326,7 +319,7 @@ class Display:
         y = status_y + status_height + gap
         panel_height = min(
             max(0, height - y - 10),
-            header_height + row_height * len(WORKFLOW_STEPS) + 8,
+            header_height + row_height * (len(WORKFLOW_STEPS) + 4) + 8,
         )
 
         tower_status = (
@@ -470,6 +463,15 @@ class Display:
             text(marker, x + 14, baseline, color, max(0.30, 0.59 * scale))
             text(workflow.label(step), x + max(49, round(75 * scale)), baseline,
                  color, max(0.29, 0.56 * scale))
+
+        for index, label in enumerate(workflow.case_labels):
+            top = rows_y + (len(WORKFLOW_STEPS) + index) * row_height
+            if top + row_height > y + panel_height:
+                break
+            color = (PANEL_GREEN if label in ('Automatic Pass', 'Manual Pass') else
+                     (0, 0, 255) if label in ('Manual check required', 'Confirmed NG') else PANEL_MUTED)
+            text(f'Position {index + 1:02}: {label}', x + 14,
+                 top + max(18, round(32 * scale)), color, max(.29, .56 * scale))
 
     def _add_ui_elements(self, frame, current_status):
         """Add UI elements to frame"""

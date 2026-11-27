@@ -95,3 +95,43 @@ def detection():
     regions = [[20 + 35*i, 120, 45 + 35*i, 160] for i in range(4)]
     boxes = np.array([carrier, *regions], dtype=np.int32)
     return boxes, np.array([0, 1, 1, 1, 1]), np.array([.99, .91, .92, .93, .94])
+
+
+@pytest.fixture
+def rig(processor, frame, monkeypatch):
+    """Feed distinct processed frames with real quadrant geometry and a fake judge."""
+    now = [100.0]
+    processor.clock = types.SimpleNamespace(time=lambda: now[0])
+    processor.statistics_logger = Mock()
+    processor.rejudge_logger = Mock()
+    light = Mock(side_effect=lambda status: status)
+    monkeypatch.setattr(processor, '_call_light_once', light)
+    judge = Mock(return_value='Pass')
+    monkeypatch.setattr(processor.inspection, 'observe', judge)
+    state = ['Tracking', 15, [100, 150]]
+    geometry = [[20, 120, 50, 140], [120, 120, 150, 140],
+                [20, 160, 50, 180], [120, 160, 150, 180]]
+
+    def feed(slots=(0, 1, 2, 3), shift=0, extras=(), confidences=None, image=None):
+        carrier = [10+shift, 110, 190+shift, 190]
+        cases = [[x1+shift, y1, x2+shift, y2] for i in slots
+                 for x1, y1, x2, y2 in [geometry[i]]]
+        cases += list(extras)
+        boxes = np.array([carrier, *cases], dtype=np.int32)
+        categories = np.array([0] + [1]*len(cases))
+        scores = np.array([.99] + (confidences if confidences is not None else [.9]*len(cases)))
+        processor.frame_count += 1
+        source = frame if image is None else image
+        state[:] = processor._handle_objects_present(source.copy(), source, boxes,
+                     categories, list(boxes[1:]), scores, *state)
+        return processor.workflow
+
+    def absent(count=1, elapsed=0):
+        now[0] += elapsed
+        for _ in range(count):
+            processor.frame_count += 1
+            state[:] = processor._handle_objects_absent(*state)
+        return processor.workflow
+
+    return types.SimpleNamespace(p=processor, feed=feed, absent=absent, now=now,
+                           state=state, judge=judge, light=light)

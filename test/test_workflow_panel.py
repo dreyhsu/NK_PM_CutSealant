@@ -19,11 +19,11 @@ def test_three_step_workflow_completes_and_stays_visible_until_next_carrier():
     assert workflow.label('inspecting_cases') == 'Inspecting 4 cases on carrier'
     assert workflow.status('inspecting_cases') == 'CURRENT'
 
-    # The OSD follows the current count so an obstruction is visible.
+    # The OSD remembers discovered cases while individual detections disappear.
     workflow.update(True, 3, 'RESULT_HOLD')
-    assert workflow.case_count == 3
-    assert workflow.status('inspecting_cases') == 'CURRENT'
-    assert workflow.status('carrier_out') == 'PENDING'
+    assert workflow.case_count == 4
+    assert workflow.status('inspecting_cases') == 'DONE'
+    assert workflow.status('carrier_out') == 'CURRENT'
 
     workflow.update(False, 0, 'WAITING', carrier_released=True)
     assert workflow.complete is True
@@ -39,12 +39,12 @@ def test_three_step_workflow_completes_and_stays_visible_until_next_carrier():
     assert workflow.status('inspecting_cases') == 'CURRENT'
 
 
-def test_incomplete_carrier_departure_resets_cycle():
+def test_incomplete_carrier_departure_preserves_panel():
     workflow = WorkflowPanelState()
     workflow.update(True, 3, 'WAITING')
     workflow.update(False, 0, 'WAITING', carrier_released=True)
-    assert workflow.completed_count == 0
-    assert workflow.status('carrier_in') == 'CURRENT'
+    assert workflow.completed_count == 1
+    assert workflow.status('inspecting_cases') == 'CURRENT'
 
 
 def test_workflow_panel_is_drawn_at_top_right(monkeypatch):
@@ -122,3 +122,17 @@ def test_tracking_osd_identifies_blinking_yellow(monkeypatch):
     display._draw_workflow_panel(frame, 'Tracking')
 
     assert 'REQUEST: TRACKING (BLINK)' in labels
+
+
+def test_panel_displays_all_position_statuses(rig, monkeypatch):
+    from cutsealant.workflow import CasePosition
+    workflow = rig.feed(())
+    for index, status in enumerate(['CHECKING', 'REVIEW', 'NG', 'PASS']):
+        workflow.positions[index] = CasePosition(index, [0, 0, .2, .2], [0, 0, 20, 20],
+                                                 status=status, decision_source='manual' if index == 3 else None)
+    workflow.update_panel(True)
+    labels = []
+    monkeypatch.setattr(cv2, 'putText', lambda image, text, *args, **kwargs: labels.append(text))
+    rig.p.display._draw_workflow_panel(np.zeros((1080, 1920, 3), np.uint8), 'NG')
+    assert {'Position 01: Checking 0/10', 'Position 02: Manual check required',
+            'Position 03: Confirmed NG', 'Position 04: Manual Pass'} <= set(labels)

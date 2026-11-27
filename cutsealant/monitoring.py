@@ -87,6 +87,8 @@ class Monitoring:
         """Reset statistics"""
         ctx = self.context
         ctx.frame_count = 0
+        # The next processed result is distinct even when its display counter repeats.
+        ctx.workflow.last_processed_frame = None
         ctx.detection_count = 0
         ctx.start_time = ctx.clock.time()
         print("Statistics reset")

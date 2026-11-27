@@ -188,6 +188,20 @@ class JSONLogger:
         })
 
 
+class CycleLogger:
+    """Terminal carrier outcomes, including partial/aborted inspection state."""
+
+    def __init__(self, log_dir, session_id):
+        self.session_id = session_id
+        self.path = os.path.join(log_dir or '.', f'cycles_{session_id}.jsonl')
+
+    def write(self, record):
+        os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+        row = dict(record, timestamp=datetime.now().isoformat(), session_id=self.session_id)
+        with open(self.path, 'a', encoding='utf-8') as stream:
+            stream.write(json.dumps(row, ensure_ascii=False) + '\n')
+
+
 class StatisticsLogger:
     """CSV statistics logger for detection results (production reporting)"""
 
@@ -362,7 +376,7 @@ class RejudgeLogger:
                 for sealant in pending_review['sealants']:
                     ai_result = sealant.get('ai_result', 'Pass')
                     user_agrees = sealant.get('user_agrees', True)
-                    final_result = self._calculate_final_result(ai_result, user_agrees)
+                    final_result = sealant.get('final_result', self._calculate_final_result(ai_result, user_agrees))
 
                     bbox = sealant.get('bbox', [0, 0, 0, 0])
 
@@ -379,7 +393,7 @@ class RejudgeLogger:
                         bbox[3],  # bbox_h
                         ai_result,
                         round(sealant.get('confidence', 0.0), 4),
-                        user_reviewed,
+                        sealant.get('user_reviewed', user_reviewed),
                         user_agrees,
                         final_result
                     ]

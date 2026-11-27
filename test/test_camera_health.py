@@ -15,20 +15,22 @@ def test_roi_boundary_blocks_inspection_and_production_records(
         processor, frame, detection, monkeypatch, x, allowed):
     boxes, categories, scores = detection
     boxes[0] = [x - 10, 130, x + 10, 170]
-    judge = Mock(return_value=False)
+    boxes[1:] = [x - 8, 132, x - 2, 140]
+    judge = Mock(return_value='Pass')
     save = Mock()
     light = Mock(side_effect=lambda status: status)
-    monkeypatch.setattr(processor, '_cut_sealant_detection', judge)
+    monkeypatch.setattr(processor.inspection, 'observe', judge)
     monkeypatch.setattr(processor, '_save_img_data', save)
     monkeypatch.setattr(processor, '_call_light_once', light)
     processor.statistics_logger = Mock()
     result = processor._check_detection_trigger(
         frame, frame, boxes, categories, list(boxes[1:]), scores,
         'Tracking', 15, [x, 150])
-    assert processor.detection_state == ('RESULT_HOLD' if allowed else 'CAMERA_ERROR')
-    assert result[0] == ('Pass' if allowed else 'Standby')
-    assert judge.call_count == save.call_count == int(allowed)
-    assert processor.statistics_logger.log_detection.call_count == int(allowed)
+    assert processor.detection_state == ('INSPECTING' if allowed else 'CAMERA_ERROR')
+    assert result[0] == ('Tracking' if allowed else 'Standby')
+    assert judge.call_count == int(allowed)
+    save.assert_not_called()
+    processor.statistics_logger.log_detection.assert_not_called()
     assert processor.carrier_count == int(allowed)
     if not allowed:
         processor.logger.log_system_event.assert_called_with('camera_misalignment_detected', {
@@ -41,8 +43,8 @@ def test_error_latches_until_operator_reset_then_rechecks(processor, frame, dete
     processor.clock = SimpleNamespace(time=lambda: 110.0)
     processor.detection_state = 'CAMERA_ERROR'
     processor.camera_error_start_time = 100
-    judge = Mock(return_value=False)
-    monkeypatch.setattr(processor, '_cut_sealant_detection', judge)
+    judge = Mock(return_value='Pass')
+    monkeypatch.setattr(processor.inspection, 'observe', judge)
     monkeypatch.setattr(processor, '_save_img_data', Mock())
     monkeypatch.setattr(processor, '_call_light_once', Mock(side_effect=lambda status: status))
     args = (frame, frame, boxes, categories, list(boxes[1:]), scores)
@@ -93,7 +95,7 @@ def test_main_loop_reset_key_requires_new_stop_period(processor, frame, detectio
         return 'Standby', 99, [99, 99]
 
     monkeypatch.setattr(processor, '_handle_objects_present', handle)
-    keys = iter([255, ord(key), 255, ord('q')])
+    keys = iter([ord(key), ord('q')])
     monkeypatch.setattr(cv2, 'waitKey', lambda _: next(keys))
     assert processor.run()
     assert observations[1] == ('WAITING', 0, [0, 0])
@@ -105,14 +107,15 @@ def test_roi_checks_selected_largest_carrier(processor, frame, detection, monkey
     boxes = np.vstack(([0, 130, 20, 170], boxes))
     categories = np.insert(categories, 0, 0)
     scores = np.insert(scores, 0, 0.99)
-    judge = Mock(return_value=False)
-    monkeypatch.setattr(processor, '_cut_sealant_detection', judge)
+    judge = Mock(return_value='Pass')
+    monkeypatch.setattr(processor.inspection, 'observe', judge)
     monkeypatch.setattr(processor, '_save_img_data', Mock())
     monkeypatch.setattr(processor, '_call_light_once', Mock(return_value='Pass'))
+    processor.detection_config['case_pass_consecutive_frames'] = 1
     processor._check_detection_trigger(frame, frame, boxes, categories, list(boxes[2:]),
                                        scores, 'Tracking', 15, [100, 150])
     assert processor.detection_state == 'RESULT_HOLD'
-    judge.assert_called_once()
+    assert judge.call_count == 2
 
 
 @pytest.mark.parametrize('size', [(1920, 1080), (800, 600), (200, 200)])

@@ -22,6 +22,35 @@ class SealantInspector:
         is_ng = self._cut_sealant_detection(frame, boxes)
         return InspectionResult(is_ng, dict(self.context.sealant_detection_results))
 
+    def observe(self, frame, box):
+        """Judge one original-resolution crop: Pass, NG, or Unavailable.
+
+        Missing image data and calculation errors are not quality decisions.
+        A usable crop without a sealant contour is an evaluated NG.
+        """
+        ctx = self.context
+        try:
+            x1, y1, x2, y2 = map(int, box)
+            height, width = frame.shape[:2]
+            if not (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height):
+                return 'Unavailable'
+            crop = frame[y1:y2, x1:x2]
+            lightness = cv2.cvtColor(crop, cv2.COLOR_BGR2HLS)[:, :, 1]
+            if lightness.size < ctx.detection_config['kmeans_clusters']:
+                return 'Unavailable'
+            segmented, centers = ctx._img_kmeans(lightness)
+            brightest = int(np.max(centers))
+            mask = cv2.inRange(segmented, brightest, brightest)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            if not contours:
+                return 'NG'
+            contour = max(contours, key=cv2.contourArea)
+            return 'Pass' if ctx._loop_closed_identify(contour) else 'NG'
+        except Exception as exc:
+            if ctx.logger:
+                ctx.logger.log_error('sealant_observation_error', exc, {'box': list(map(int, box))})
+            return 'Unavailable'
+
     def _cut_sealant_detection(self, frame, boxes):
         """Detect if sealant is properly cut and store individual results"""
         ctx = self.context

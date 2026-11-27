@@ -45,6 +45,7 @@ class ManualReviewWindow:
             print("[ManualReview] No sealants to review")
             return False
 
+        self.pending_action = None
         self.sealant_crops = []
         self.sealant_states = []
         self.original_positions = []
@@ -82,7 +83,8 @@ class ManualReviewWindow:
                 'user_agrees': user_agrees,
                 'confidence': confidence,
                 'bbox': [x1, y1, x2 - x1, y2 - y1],  # x, y, w, h
-                'source_index': i  # Original index in pending_review['sealants']
+                'source_index': i,
+                'position_id': f'{i + 1:02}'
             })
 
             # Store original center position for layout
@@ -104,6 +106,40 @@ class ManualReviewWindow:
 
         return True
 
+    def open_cases(self, cases):
+        """Open immutable per-position evidence captured on different frames."""
+        if not cases:
+            return False
+        self.pending_action = None
+        self.sealant_crops = []
+        self.sealant_states = []
+        self.original_positions = []
+        reference = cases[0]
+        rx1, ry1, rx2, ry2 = reference['relative_bbox']
+        reference_width = reference['crop'].shape[1] / (rx2 - rx1)
+        reference_height = reference['crop'].shape[0] / (ry2 - ry1)
+        for case in cases:
+            crop = case['crop']
+            if crop is None or crop.size == 0:
+                continue
+            index = case['index']
+            x1, y1, x2, y2 = case['relative_bbox']
+            self.sealant_crops.append(crop.copy())
+            self.sealant_states.append({'source_index': index, 'position_id': f'{index + 1:02}',
+                                       'ai_result': 'NG', 'user_agrees': True,
+                                       'confidence': case['confidence']})
+            self.original_positions.append(((x1+x2)*reference_width/2,
+                                            (y1+y2)*reference_height/2,
+                                            crop.shape[1], crop.shape[0]))
+        if not self.sealant_crops:
+            return False
+        self._create_layout()
+        self._draw_window()
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(self.window_name, self._mouse_callback)
+        self.is_open = True
+        return True
+
     def _create_layout(self):
         """Create layout preserving relative spatial positions"""
         if len(self.sealant_crops) == 0:
@@ -121,14 +157,14 @@ class ManualReviewWindow:
         # Calculate scale to fit in reasonable window size
         max_canvas_width = 1200
         max_canvas_height = 800
-        button_area_height = 80
+        button_area_height = 105
 
         scale = min(
             (max_canvas_width - 2 * self.padding) / max(orig_width, 1),
             (max_canvas_height - 2 * self.padding - button_area_height) / max(orig_height, 1),
             2.0  # Max scale
         )
-        scale = max(scale, 0.5)  # Min scale
+        scale = max(scale, 0.001)
 
         # Calculate canvas size
         self.canvas_width = int(orig_width * scale + 2 * self.padding)
@@ -196,13 +232,13 @@ class ManualReviewWindow:
             cv2.rectangle(self.canvas, (x, y), (x + w, y + h), color, self.border_thickness)
 
             # Draw label (S1, S2, ...)
-            label = f"S{i + 1}"
+            label = f"Position {self.sealant_states[i]['position_id']}"
             label_pos = (x + 5, y + 20)
             cv2.putText(self.canvas, label, label_pos, cv2.FONT_HERSHEY_SIMPLEX,
                        0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
         # Draw buttons at bottom
-        button_y = self.canvas_height - 60
+        button_y = self.canvas_height - 85
         button_height = 40
         button_width = 120
 
@@ -226,14 +262,15 @@ class ManualReviewWindow:
         cv2.putText(self.canvas, "Cancel", (cancel_x + 20, button_y + 28),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-        # Draw instruction text
-        instruction = "Click sealant to toggle agree/disagree | Enter=Confirm | ESC=Cancel"
-        cv2.putText(self.canvas, instruction, (10, self.canvas_height - 5),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+        for instruction, baseline in (
+                ('Click crop: agree NG / disagree Pass', self.canvas_height - 23),
+                ('Enter: Confirm | Esc: Cancel | X: Terminate', self.canvas_height - 7)):
+            cv2.putText(self.canvas, instruction, (10, baseline),
+                        cv2.FONT_HERSHEY_SIMPLEX, .4, (200, 200, 200), 1)
 
     def _mouse_callback(self, event, x, y, flags, param):
         """Handle mouse click events"""
-        if event != cv2.EVENT_LBUTTONDOWN:
+        if not self.is_open or event != cv2.EVENT_LBUTTONDOWN:
             return
 
         # Check if clicked on a sealant
@@ -271,16 +308,24 @@ class ManualReviewWindow:
         print("[ManualReview] Cancelled - resetting to auto-agree")
         self.pending_action = 'cancel'
 
-    def update(self):
-        """Update display and handle keyboard input. Returns: 'confirm', 'cancel', or None"""
+    def update(self, key=None):
+        """Update display using the main loop's single keyboard event. Returns: 'confirm', 'cancel', or None"""
         if not self.is_open or self.canvas is None:
             return None
 
-        cv2.imshow(self.window_name, self.canvas)
-        key = cv2.waitKey(1) & 0xFF
+        window_closed = False
+        try:
+            if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
+                self.pending_action = 'cancel'
+                window_closed = True
+            else:
+                cv2.imshow(self.window_name, self.canvas)
+        except cv2.error:
+            self.pending_action = 'cancel'
+            window_closed = True
 
         # Keyboard input sets pending_action
-        if key == 13:   # Enter
+        if key == 13 and not window_closed:   # Enter
             self.pending_action = 'confirm'
         elif key == 27: # ESC
             self.pending_action = 'cancel'
@@ -313,6 +358,13 @@ class ManualReviewWindow:
     def close(self):
         """Close the review window"""
         self.is_open = False
+        self.pending_action = None
+        self.sealant_crops = []
+        self.sealant_states = []
+        self.sealant_rects = []
+        self.original_positions = []
+        self.canvas = None
+        self.confirm_btn_rect = self.cancel_btn_rect = None
         try:
             cv2.destroyWindow(self.window_name)
         except Exception:
@@ -320,153 +372,89 @@ class ManualReviewWindow:
 
 
 class ReviewController:
-    """Composed service; context supplies shared application interfaces."""
+    """Queue frozen failure evidence and apply decisions to stable position IDs."""
 
     def __init__(self, context):
         self.context = context
+        self.review_cycle_id = None
+        self.review_indices = []
 
-    def _open_manual_review(self):
-        """Open manual review window (V6.0)"""
+    def open_queued(self):
+        workflow = self.context.workflow
+        if workflow.review_queue:
+            self._open_manual_review(automatic=True)
+
+    def _open_manual_review(self, automatic=False):
         ctx = self.context
-        if ctx.detection_state != 'RESULT_HOLD':
-            print("[V6.0] Cannot open review: not in RESULT_HOLD state")
+        workflow = ctx.workflow
+        if not workflow.active or (ctx.manual_review_window and ctx.manual_review_window.is_open):
             return
-
-        if not ctx.pending_review or ctx.current_raw_frame is None:
-            print("[V6.0] Cannot open review: no pending data")
+        indices = sorted(i for i, case in workflow.positions.items()
+                         if case.needs_review and (not automatic or i in workflow.review_queue))
+        cases = [workflow.positions[i] for i in indices if workflow.positions[i].crop is not None]
+        if not cases:
             return
-
-        # Mark that user pressed M key
-        ctx.user_reviewed_flag = True
-        ctx.pending_review['user_reviewed'] = True
-
-        print(f"[V6.0] Opening manual review for Carrier #{ctx.pending_review['carrier_id']}")
-
-        # If fullscreen is active, exit it so the review window can appear on top
         if ctx.is_fullscreen:
             ctx._toggle_fullscreen(ctx.display_config['window_name'])
             ctx.fullscreen_paused_for_review = True
-            print("[V6.0] Fullscreen paused for manual review")
-
-        # Create manual review window if needed
-        padding = ctx.rejudge_config.get('review_window_padding', 50)
-        thickness = ctx.rejudge_config.get('review_border_thickness', 3)
-
-        if not ctx.manual_review_window:
-            ctx.manual_review_window = ManualReviewWindow(padding=padding, border_thickness=thickness)
-
-        # Prepare sealant boxes as list of arrays
-        sealant_boxes_list = []
-        for sealant in ctx.pending_review['sealants']:
-            bbox = sealant['bbox']
-            # Convert [x, y, w, h] back to [x1, y1, x2, y2]
-            x1, y1 = bbox[0], bbox[1]
-            x2, y2 = bbox[0] + bbox[2], bbox[1] + bbox[3]
-            sealant_boxes_list.append(np.array([x1, y1, x2, y2]))
-
-        # Build confidence dict
-        confidences = {}
-        for sealant in ctx.pending_review['sealants']:
-            bbox = sealant['bbox']
-            x1, y1 = bbox[0], bbox[1]
-            x2, y2 = bbox[0] + bbox[2], bbox[1] + bbox[3]
-            box_key = f"{x1}_{y1}_{x2}_{y2}"
-            confidences[box_key] = sealant.get('confidence', 0.0)
-
-        # Open review window, passing current pending_review states to restore previous user_agrees
-        previous_states = ctx.pending_review.get('sealants', None)
-        success = ctx.manual_review_window.open(
-            ctx.current_raw_frame,
-            sealant_boxes_list,
-            ctx.sealant_detection_results,
-            confidences,
-            previous_states=previous_states
-        )
-
-        if success:
-            print("[V6.0] Review window opened")
+        if ctx.manual_review_window is None:
+            ctx.manual_review_window = ManualReviewWindow(
+                padding=ctx.rejudge_config.get('review_window_padding', 50),
+                border_thickness=ctx.rejudge_config.get('review_border_thickness', 3))
+        records = [{'index': case.index, 'crop': case.crop.copy(),
+                    'confidence': case.confidence, 'relative_bbox': case.relative_bbox}
+                   for case in cases]
+        if ctx.manual_review_window.open_cases(records):
+            self.review_cycle_id = ctx.carrier_count
+            self.review_indices = [case.index for case in cases]
+            workflow.review_queue.difference_update(self.review_indices)
             if ctx.logger:
-                ctx.logger.log_system_event("manual_review_opened", {
-                    "carrier_id": ctx.pending_review['carrier_id'],
-                    "sealant_count": len(ctx.pending_review['sealants'])
-                })
-        else:
-            print("[V6.0] Failed to open review window")
+                ctx.logger.log_system_event('manual_review_opened', {
+                    'carrier_id': ctx.carrier_count,
+                    'position_ids': [f'{i + 1:02}' for i in self.review_indices]})
 
     def _handle_review_complete(self, result):
-        """Handle manual review completion (V6.0)"""
         ctx = self.context
-        if not ctx.manual_review_window or not ctx.pending_review:
+        workflow = ctx.workflow
+        if not workflow.active or self.review_cycle_id != ctx.carrier_count:
+            self.close()
             return
-
         if result == 'confirm':
-            # Get user modifications from review window
-            review_results = ctx.manual_review_window.get_results()
+            for state in ctx.manual_review_window.get_results():
+                index = state['source_index']
+                if index not in self.review_indices or index not in workflow.positions:
+                    continue
+                case = workflow.positions[index]
+                if not case.needs_review:
+                    continue
+                case.status = 'NG' if state.get('user_agrees', True) else 'PASS'
+                case.decision_source = 'manual'
+                case.user_reviewed = True
+            ctx.user_reviewed_flag = True
+        if ctx.logger:
+            ctx.logger.log_system_event('manual_review_' + ('confirmed' if result == 'confirm' else 'cancelled'), {
+                'carrier_id': ctx.carrier_count,
+                'position_ids': [f'{i + 1:02}' for i in self.review_indices]})
+        workflow._sync_pending_review()
+        self.close()
 
-            # Update pending_review using source_index to handle skipped crops correctly
-            for state in review_results:
-                source_index = state.get('source_index')
-                if source_index is not None and source_index < len(ctx.pending_review['sealants']):
-                    ctx.pending_review['sealants'][source_index]['user_agrees'] = state.get('user_agrees', True)
-
-            # Count modifications
-            disagree_count = sum(1 for s in ctx.pending_review['sealants'] if not s.get('user_agrees', True))
-            print(f"[V6.0] Review confirmed: {disagree_count} modifications")
-
-            if ctx.logger:
-                ctx.logger.log_system_event("manual_review_confirmed", {
-                    "carrier_id": ctx.pending_review['carrier_id'],
-                    "modifications": disagree_count
-                })
-
-        elif result == 'cancel':
-            # Reset all to agree (auto-agree)
-            for sealant in ctx.pending_review['sealants']:
-                sealant['user_agrees'] = True
-
-            print("[V6.0] Review cancelled - auto-agree applied")
-
-            if ctx.logger:
-                ctx.logger.log_system_event("manual_review_cancelled", {
-                    "carrier_id": ctx.pending_review['carrier_id']
-                })
-
-        # Close the review window
-        ctx.manual_review_window.close()
-
-        # Restore fullscreen if it was paused for review
+    def close(self):
+        ctx = self.context
+        if ctx.manual_review_window:
+            ctx.manual_review_window.close()
+        self.review_cycle_id = None
+        self.review_indices = []
         if ctx.fullscreen_paused_for_review:
             ctx._toggle_fullscreen(ctx.display_config['window_name'])
             ctx.fullscreen_paused_for_review = False
-            print("[V6.0] Fullscreen restored after manual review")
 
     def _write_pending_review_log(self):
-        """Write pending review data to rejudge CSV log (V6.0)"""
         ctx = self.context
-        if not ctx.pending_review:
+        if ctx.pending_review is None or ctx.review_log_written:
             return
-
-        if ctx.review_log_written:
-            return
-
-        if not ctx.rejudge_logger:
-            print("[V6.0] Warning: rejudge_logger not initialized")
-            return
-
-        # Close review window if still open
+        # Unconfirmed edits never overwrite already committed position decisions.
         if ctx.manual_review_window and ctx.manual_review_window.is_open:
-            # Treat as cancel - auto agree
-            for sealant in ctx.pending_review['sealants']:
-                sealant['user_agrees'] = True
-            ctx.manual_review_window.close()
-
-        # Write to CSV
-        ctx.rejudge_logger.write_records(ctx.pending_review, ctx.source_name)
+            self.close()
+        if ctx.rejudge_logger:
+            ctx.rejudge_logger.write_records(ctx.pending_review, ctx.source_name)
         ctx.review_log_written = True
-
-        if ctx.logger:
-            ctx.logger.log_system_event("rejudge_log_written", {
-                "carrier_id": ctx.pending_review['carrier_id'],
-                "user_reviewed": ctx.pending_review.get('user_reviewed', False),
-                "sealant_count": len(ctx.pending_review['sealants'])
-            })

@@ -18,7 +18,7 @@ from .config import ConfigManager
 from .detector import YoloDetector, load_yolo
 from .display import Display
 from .inspection import SealantInspector
-from .logs import JSONLogger, RejudgeLogger, StatisticsLogger
+from .logs import CycleLogger, JSONLogger, RejudgeLogger, StatisticsLogger
 from .monitoring import Monitoring
 from .recording import VideoRecorder
 from .review import ReviewController
@@ -110,7 +110,7 @@ class SafeVideoProcessor:
         self.yolo_thread = None
 
         # === NEW: Detection State Machine ===
-        self.detection_state = 'WAITING'  # WAITING, DETECTED, RESULT_HOLD
+        self.detection_state = 'WAITING'  # WAITING, INSPECTING, RESULT_HOLD, CAMERA_ERROR
         self.detection_result = None      # None, 'Pass', 'NG'
         self.last_light_status = None     # Track last light status to avoid duplicate calls
         self.detection_triggered_time = 0 # Track when detection was last triggered
@@ -147,7 +147,7 @@ class SafeVideoProcessor:
         self.manual_review_window = None     # ManualReviewWindow instance
         self.pending_review = None           # Pending review data for current carrier
         self.carrier_count = 0               # Carrier sequence number
-        self.user_reviewed_flag = False      # Whether user pressed M key in current RESULT_HOLD
+        self.user_reviewed_flag = False      # Whether a manual decision was confirmed this cycle
         self.current_raw_frame = None        # Store raw frame for review window
         self.current_sealant_boxes = []      # Store sealant boxes for review window
         self.current_scores = {}             # Store confidence scores for sealants
@@ -201,6 +201,10 @@ class SafeVideoProcessor:
 
                 # V6.0: Initialize rejudge logger
                 self.rejudge_logger = RejudgeLogger(log_dir, self.logger.session_id)
+
+            self.workflow.cycle_logger = CycleLogger(
+                os.path.dirname(logging_config['log_file_path']),
+                self.logger.session_id if self.logger else self.workflow.audit_session_id)
 
             # V6.0: Load rejudge configuration
             self.rejudge_config = self.config_manager.get_rejudge_config()
@@ -321,6 +325,7 @@ class SafeVideoProcessor:
             # === 24/7 Monitoring Mode: Removed hard timeout limit ===
             # Instead of stopping, we log warnings and continue running
             frame_timeout_count = 0
+            last_display_frame = None
 
             print("Starting main processing loop with state machine...")
             print(f"Initial state: {self.detection_state}")
@@ -329,7 +334,7 @@ class SafeVideoProcessor:
             print("  Q: Quit | S: Screenshot | F: Fit screen | G: Fullscreen")
             print("  P: Statistics | R: Reset stats | V: Toggle recording")
             print("  T: Retry tower after recovery exhaustion | Close window: Quit")
-            print("  C: Reset camera alignment error | M: Review cases on carrier")
+            print("  C: Reset camera alignment error | M: Recheck failed positions | X: Terminate cycle")
             print("===========================\n")
 
             # Create display window with proper flags for fullscreen support
@@ -347,6 +352,15 @@ class SafeVideoProcessor:
                 if cv2.getWindowProperty(
                         self.display_config['window_name'], cv2.WND_PROP_VISIBLE) < 1:
                     break
+                # Termination takes priority over queued inference and review edits.
+                if key in (ord('x'), ord('X')):
+                    current_status, stop_time, previous_centroid, _ = self._handle_key(
+                        key, current_status, stop_time, previous_centroid)
+                    if last_display_frame is not None:
+                        idle_frame = last_display_frame.copy()
+                        self._add_ui_elements(idle_frame, current_status)
+                        self._display_frame(idle_frame, self.display_config['window_name'])
+                    continue
                 # === Heartbeat logging for system health monitoring ===
                 self._log_heartbeat()
 
@@ -357,14 +371,14 @@ class SafeVideoProcessor:
                     self.idle_warning_logged = False
 
                 except queue.Empty:
-                    if key == ord('q'):
+                    current_status, stop_time, previous_centroid, quit_requested = self._handle_key(
+                        key, current_status, stop_time, previous_centroid)
+                    if quit_requested:
                         break
-                    if key in (ord('t'), ord('T')):
-                        self.tower.retry_latest()
-                    if key in (ord('c'), ord('C')) and self.detection_state == 'CAMERA_ERROR':
-                        current_status = self.workflow.reset_camera_error(current_status)
-                        stop_time = 0
-                        previous_centroid = [0, 0]
+                    if last_display_frame is not None:
+                        idle_frame = last_display_frame.copy()
+                        self._add_ui_elements(idle_frame, current_status)
+                        self._display_frame(idle_frame, self.display_config['window_name'])
                     frame_timeout_count += 1
 
                     # === 24/7 Mode: Log warning instead of stopping ===
@@ -417,6 +431,7 @@ class SafeVideoProcessor:
 
                 # Process frame
                 raw_frame = frame.copy()
+                last_display_frame = raw_frame
                 sealant_boxes = []
 
                 # Process detections
@@ -453,16 +468,7 @@ class SafeVideoProcessor:
                         current_status, stop_time, previous_centroid
                     )
 
-                carrier_released = (
-                    not carrier_present
-                    and self.absent_frame_count
-                    >= self.detection_config.get('absent_tolerance_frames', 5)
-                )
-                self.workflow.update_panel(
-                    carrier_present,
-                    case_count,
-                    carrier_released,
-                )
+                self.workflow.update_panel(carrier_present, case_count)
                 self._add_ui_elements(frame, current_status)
 
                 # Record after all inference annotations, including workflow.
@@ -472,51 +478,11 @@ class SafeVideoProcessor:
                     else:  # 'inference'
                         self.video_recorder.record_frame(frame)
 
-                # V6.0: Update manual review window if open
-                if self.manual_review_window and self.manual_review_window.is_open:
-                    review_result = self.manual_review_window.update()
-                    if review_result in ['confirm', 'cancel']:
-                        self._handle_review_complete(review_result)
-
                 self._display_frame(frame, self.display_config['window_name'])
-
-                # Check for quit command
-                frame_key = cv2.waitKey(1) & 0xFF
-                if frame_key != 255:
-                    key = frame_key
-                if key == ord('q'):
-                    print("Quit command received")
-                    if self.logger:
-                        self.logger.log_system_event("quit_command_received")
+                current_status, stop_time, previous_centroid, quit_requested = self._handle_key(
+                    key, current_status, stop_time, previous_centroid, frame)
+                if quit_requested:
                     break
-                elif key == ord('s') or key == ord('S'):
-                    # Screenshot function
-                    self._take_screenshot(frame)
-                elif key in (ord('t'), ord('T')):
-                    self.tower.retry_latest()
-                elif key in (ord('c'), ord('C')):
-                    if self.detection_state == 'CAMERA_ERROR':
-                        current_status = self.workflow.reset_camera_error(current_status)
-                        stop_time = 0
-                        previous_centroid = [0, 0]
-                elif key == ord('p') or key == ord('P'):
-                    # Print statistics (moved from 's')
-                    self._print_statistics()
-                elif key == ord('r'):
-                    self._reset_statistics()
-                elif key == ord('f') or key == ord('F'):
-                    # Toggle fit screen mode
-                    self._toggle_fit_screen()
-                elif key == ord('g') or key == ord('G'):
-                    # Toggle fullscreen mode
-                    self._toggle_fullscreen(self.display_config['window_name'])
-                elif key == ord('v') or key == ord('V'):
-                    # Toggle video recording (can start even if not enabled in config)
-                    self._toggle_recording()
-                elif key == ord('m') or key == ord('M'):
-                    # V6.0: Open manual review window (only in RESULT_HOLD state)
-                    if self.detection_state == 'RESULT_HOLD':
-                        self._open_manual_review()
 
                 # Performance monitoring
                 if self.frame_count % 100 == 0:
@@ -534,6 +500,47 @@ class SafeVideoProcessor:
 
         return True
 
+    def _handle_key(self, key, current_status, stop_time, previous_centroid, frame=None):
+        """Dispatch the sole HighGUI key event, including when inference is idle."""
+        if key in (ord('q'), ord('Q')):
+            return current_status, stop_time, previous_centroid, True
+        if key in (ord('x'), ord('X')):
+            current_status = self.workflow.terminate(current_status)
+            # Discard buffered evidence and require a fresh stability interval.
+            for pending_queue in (self.frame_queue, self.result_queue):
+                while True:
+                    try:
+                        pending_queue.get_nowait()
+                    except queue.Empty:
+                        break
+            return current_status, 0, [0, 0], False
+        if key in (ord('t'), ord('T')):
+            self.tower.retry_latest()
+        elif key in (ord('c'), ord('C')) and self.detection_state == 'CAMERA_ERROR':
+            current_status = self.workflow.reset_camera_error(current_status)
+            stop_time, previous_centroid = 0, [0, 0]
+        elif key in (ord('m'), ord('M')):
+            self._open_manual_review()
+        elif key in (ord('s'), ord('S')) and frame is not None:
+            self._take_screenshot(frame)
+        elif key in (ord('p'), ord('P')):
+            self._print_statistics()
+        elif key == ord('r'):
+            self._reset_statistics()
+        elif key in (ord('f'), ord('F')):
+            self._toggle_fit_screen()
+        elif key in (ord('g'), ord('G')):
+            self._toggle_fullscreen(self.display_config['window_name'])
+        elif key in (ord('v'), ord('V')):
+            self._toggle_recording()
+        if self.manual_review_window and self.manual_review_window.is_open:
+            result = self.manual_review_window.update(key)
+            if result in ('confirm', 'cancel'):
+                self._handle_review_complete(result)
+        current_status = self.workflow.refresh_status(current_status)
+        self.review.open_queued()
+        return current_status, stop_time, previous_centroid, False
+
     def stop(self):
         """Stop video processor and cleanup resources"""
         if self._cleanup_done:
@@ -544,7 +551,9 @@ class SafeVideoProcessor:
         self.stop_event.set()
         self.tower.stop()
 
-        # V6.0: Write any pending review before stopping
+        self.workflow.finalize('Interrupted')
+
+        # Compatibility: flush pending data provided through the facade.
         if self.pending_review:
             print("[V6.0] Writing pending review before shutdown...")
             self._write_pending_review_log()

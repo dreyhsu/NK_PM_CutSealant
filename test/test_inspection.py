@@ -78,3 +78,23 @@ def test_large_box_analyses_only_largest_contour(processor, frame, monkeypatch):
     processor._cut_sealant_detection(frame, np.array([[0, 0, 50, 50]]))
     judge.assert_called_once()
     assert np.array_equal(judge.call_args.args[0], contours[1])
+
+
+def test_individual_observation_uses_original_crop_size(processor, frame, monkeypatch):
+    judge = Mock(return_value=(np.full((25, 35), 255, np.uint8), np.array([[0], [100], [255]], np.uint8)))
+    monkeypatch.setattr(processor, '_img_kmeans', judge)
+    monkeypatch.setattr(processor, '_loop_closed_identify', lambda contour: True)
+    assert processor.inspection.observe(frame, [10, 20, 45, 45]) == 'Pass'
+    assert judge.call_args.args[0].shape == (25, 35)
+
+
+@pytest.mark.parametrize('box', [[0, 0, 0, 0], [-1, 0, 20, 20], [190, 190, 210, 210]])
+def test_unavailable_crop_is_not_a_quality_failure(processor, frame, box):
+    assert processor.inspection.observe(frame, box) == 'Unavailable'
+
+
+def test_individual_observation_distinguishes_ng_from_calculation_failure(processor, frame, monkeypatch):
+    monkeypatch.setattr(cv2, 'findContours', lambda *args: ([], None))
+    assert processor.inspection.observe(frame, [0, 0, 20, 20]) == 'NG'
+    monkeypatch.setattr(processor, '_img_kmeans', Mock(side_effect=ValueError('bad image')))
+    assert processor.inspection.observe(frame, [0, 0, 20, 20]) == 'Unavailable'

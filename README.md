@@ -4,56 +4,40 @@ Python application for inspecting sealant on cases carried on a carrier. It read
 
 ## How detection works
 
+Each carrier cycle remembers up to four case positions relative to the selected carrier bounding box:
+
 ```text
-Start: YELLOW standby
-         |
-YOLO finds a carrier and sealant boxes
-         |
-Carrier center is in the lower half of the image
-and its position stays stable for about one second
-         |
-Carrier center inside the configured ROI? -- No --> CAMERA_ERROR; press C after realigning
-         |
-        Yes
-         |
-Continuously analyze all four case sealant crops while the carrier is present
-         |
-Any evaluated crop fails? ---- Yes ---> NG: RED + buzzer
-         |
-         No
-         |
-    Pass: GREEN
-         |
-Keep the result live; red can change to green when all four cases pass
-Optionally press M for manual review
-         |
-Carrier disappears for at least 5 processed frames
-AND result has been held for at least 2 seconds
-         |
-Save review records; return to YELLOW for the next carrier
+01 top-left      02 top-right
+03 bottom-left   04 bottom-right
 ```
 
-YOLO locates objects; it does **not** directly classify sealant quality in this program. For each crop, OpenCV groups lightness values into three clusters, selects the brightest cluster, finds its largest external contour, and tests the approximated contour for convexity. A failed evaluated contour makes the entire carrier NG.
+1. Start in yellow Standby. When a carrier arrives, request blinking yellow Tracking.
+2. Wait for the carrier to stop in the lower image half and pass the configured camera-alignment ROI check.
+3. Discover occupied quadrants throughout the cycle. A detected case center assigns its position; detections outside the carrier are ignored. If several detections occupy the same quadrant, use the highest confidence, then the smaller area.
+4. For each unfinished automatic case, require 10 consecutive passing observations. Five consecutive NG observations automatically open manual review. Both thresholds are configurable in `[DETECTION_SETTINGS]`:
 
-The one-second stability estimate uses processed frames divided by configured FPS. YOLO and quality analysis continue while the carrier remains present, so a temporary red result caused by an obstruction can recover to green when all four cases are detected and pass together. Set `DETECTION_SETTINGS.expected_case_count` for the number of cases on a carrier (default 4). Older INI files using `expected_module_count` are still accepted.
+   ```ini
+   case_pass_consecutive_frames = 10
+   case_fail_consecutive_frames = 5
+   ```
 
-Before starting case inspection, the stopped carrier center must be inside the `[CAMERA_HEALTH]` ROI in `config/config.ini`. By default it covers the central 50% of the image (`x=0.25`, `y=0.25`, `width=0.50`, `height=0.50`, as frame ratios). An outside center latches `CAMERA_ERROR`, skips inspection, requests steady yellow Standby, and displays a blinking red border with “Camera Out of Alignment!” and a C-key reset hint. Removing the carrier does not clear the error. After correcting alignment, press **C** to reset; a fresh stability period and ROI check are required before inspection resumes. Detection and reset events are logged, including the center/ROI and error duration. This position check infers possible misalignment; it does not measure camera angle. Blink interval, font scale, and border thickness are configurable in the same section.
+5. Missing detections, unusable crops, or carrier movement/loss reset unfinished streaks. They do not create a new NG decision. Passed cases remain passed when covered by hands or metal, and are no longer judged.
+6. Manual review shows **Position 01–04**, using the saved image that caused the failure. Agreeing with NG confirms NG; disagreeing and confirming immediately produces Manual Pass. Confirmed NG requires another manual check with **M**; automatic passing frames cannot clear it. Cancel, Escape, or closing review leaves the case unresolved. Other positions continue checking while review is open; later failures queue for another popup.
+7. When at least one case has been discovered and every discovered case passes, request green and show **Ready - remove carrier**. Discovery continues: a newly revealed case withdraws readiness until it passes.
+8. Close successfully only when the carrier disappears for `absent_tolerance_frames` processed results (default 5) and readiness has lasted `result_hold_min_seconds` (default 2). Zero visible cases while the carrier remains does not close the cycle.
+9. If the carrier disappears before readiness, hold its results and show **Cycle incomplete - restore carrier or press X**. Press **X** to terminate without confirmation, save partial results, clear review and case memory, and return to Standby. The same carrier can start a new cycle after a fresh stability period. Quit/shutdown records an active cycle as Interrupted.
 
-### Four inspection locations: current limitations
+The 10/5 streaks count distinct processed inference results, not display refreshes or a fixed duration. The existing stop estimate uses processed results divided by configured FPS. After movement/loss, a fresh stability period is required before unfinished cases resume inspection. Review and application controls share one keyboard handler, including when inference is idle.
 
-The application now requires exactly four detected regions for Pass, but it does not enforce fixed physical positions:
+YOLO supplies carrier and sealant locations; it does not classify sealant quality. Each original-resolution crop is converted to HLS, its lightness values are grouped into three clusters, and the largest contour of the brightest cluster is tested with `cv2.isContourConvex()`. A usable crop without a contour is NG; invalid crops and calculation errors are Unavailable and reset the streak. This remains a shape heuristic, not a direct gap-width or continuity measurement. YOLO inference sizing is unchanged.
 
-| YOLO output | Current behavior |
-| --- | --- |
-| Four separate sealant boxes | Analyze each box; any evaluated failure makes the carrier NG. |
-| Three passing boxes | NG; all four configured case regions are required for Pass. |
-| One large box containing four sealants | Analyze only the largest contour within that crop, not four separate locations. |
-| Empty crop, missing contour or caught crop error | NG; an unanalysed case cannot contribute to Pass. |
-| Carrier with no sealant class | After stability and ROI checks, NG because the carrier has no detected case sealant regions. |
+Before inspection starts, the carrier center must be inside the `[CAMERA_HEALTH]` ROI. By default this is the central 50% of the frame (`x=0.25`, `y=0.25`, `width=0.50`, `height=0.50`). An outside center latches `CAMERA_ERROR`, requests steady yellow, and shows a blinking red warning. Correct alignment and press **C**; a fresh stability period and ROI check are required. **X does not clear this error.** This check infers possible misalignment; it does not measure camera angle.
 
-The function historically named “closed loop” actually uses `cv2.isContourConvex()`. This is a shape heuristic, not a direct gap-width or continuity measurement. Sealant boxes are not filtered for containment inside the selected carrier. Review labels follow detector order, not fixed physical positions.
+### Loading assumptions and limits
 
-This refactor preserves these rules. Production rules requiring four valid locations must be implemented as a separate change.
+There is one case per quadrant, the carrier orientation stays consistent, and cases are not replaced during a cycle. Position IDs are quadrant IDs, so a carrier with cases only at 02 and 04 keeps those numbers. Centers exactly on a dividing line belong to the right/bottom quadrant. `expected_case_count` and the older `expected_module_count` are accepted for the legacy aggregate inspection API; active cycles discover occupied positions and do not require four cases.
+
+A case hidden for the entire cycle cannot be known to the system. Carrier absence is camera-based: hiding the carrier itself can resemble departure after readiness. Independent physical departure verification is outside this implementation. One oversized detection still analyzes only its largest contour and represents only its center's quadrant.
 
 ## Install and run
 
@@ -96,7 +80,7 @@ python yoloVideoMain_V6.0.7.py
 1. Obtain the trained `.pt` model from the original developer. This repository does not include it. Set `[PATHS] model_path` to that file.
 2. Choose `[VIDEO_SOURCE] mode`: `video`, `camera`, or `dfk_camera`. Supply `video_path` for video mode or the correct camera settings for a live source.
 3. Replace the original developer's absolute model/video paths. For example, use `./models/yolo11s_20251223.pt` and your own video path.
-4. Select `[DEVICE_SETTINGS] device` for the host. The checked-in configuration uses `mps` for the original Mac. For a CPU configuration, use `cpu` and set `[YOLO_SETTINGS] use_half_precision = false`. CUDA requires an appropriate local PyTorch/CUDA installation.
+4. Select `[DEVICE_SETTINGS] device` for the host. The checked-in configuration uses `cuda:0`; use `mps` on a supported Mac. For a CPU configuration, use `cpu` and set `[YOLO_SETTINGS] use_half_precision = false`. CUDA requires an appropriate local PyTorch/CUDA installation.
 5. TIS industrial-camera mode requires the matching vendor camera software and x64 DLLs, including the configured `tisgrabber_x64.dll`, installed locally. These binaries are excluded from Git. General camera mode currently uses OpenCV DirectShow, so its existing implementation targets Windows.
 6. Set `[LIGHT_TOWER] mode = mock` to simulate tower transport without accessing USB. Set `mode = usb` to control the physical PATLITE; this requires PyUSB and the appropriate working USB backend/driver setup for the Windows installation. Preserve a known-working driver setup; installing Python packages alone does not establish it. USB commands run in serialized background child processes using the application's Python interpreter. Activate the environment when using the physical tower:
 
@@ -139,7 +123,7 @@ There is one application, not one process per module. Background capture and inf
 
 | Key | Action |
 | --- | --- |
-| `q` | Quit (the current implementation uses lowercase). |
+| `Q` / `q` | Quit; record an active cycle as Interrupted. |
 | Close main window | Quit and stop tower retries. |
 | `T` / `t` | Retry the latest desired tower state after recovery exhaustion. |
 | `S` / `s` | Save screenshot. |
@@ -148,11 +132,12 @@ There is one application, not one process per module. Background capture and inf
 | `P` / `p` | Print and log statistics. |
 | `r` | Reset processing counters. |
 | `V` / `v` | Toggle video recording. |
-| `M` / `m` | Open manual review during `RESULT_HOLD`. |
+| `M` / `m` | Reopen manual check for unresolved failed positions. |
+| `X` / `x` | Terminate the cycle; restart after a fresh carrier stability period. |
 | `C` / `c` | Reset a latched camera alignment error after correcting alignment. |
 | Enter / ESC | Confirm / cancel in the review window. |
 
-Review borders: green = agree with Pass, red = agree with NG, yellow = disagree. Confirmation stores choices for the rejudge CSV. Cancellation restores agreement with the original result. A changed review result does **not** change the tower light or original inspection statistics.
+Review borders: green = agree with Pass, red = agree with NG, yellow = disagree. Confirmation stores choices for the rejudge CSV. Cancellation restores agreement with the original result. Confirmed manual Pass changes the case result and can make the carrier ready. Confirmed NG remains unresolved until manual recheck. Pending edits do not change a saved decision.
 
 With the supplied paths, outputs are:
 
@@ -160,12 +145,13 @@ With the supplied paths, outputs are:
 | --- | --- |
 | `logs/detection.log` | JSON lines: configuration, state changes, inspection results, health and review events. |
 | `logs/detection_errors.log` | Errors explicitly reported by the application logger. |
-| `logs/statistics_<session>.csv` | Per-inspection results, counts, cycle time and closing summary. |
+| `logs/statistics_<session>.csv` | Completed cycles only: final case counts, cycle time and closing summary. |
+| `logs/cycles_<session>.jsonl` | One terminal Completed, Terminated or Interrupted record per cycle, with per-position state and decision source. |
 | `logs/rejudge/rejudge_YYYYMMDD.csv` | Per-sealant AI result, agreement, confidence and final `Pass`, `NG`, `REPASS` or `REFAIL`. |
-| `validation/` | Raw inspection images labeled OK/NG in the filename. |
+| `validation/` | Legacy validation-image helper output; active cycles keep evidence crops in memory for review. |
 | `screenshots/`, `recordings/` | User screenshots and optional recordings. |
 
-Setting `save_detection_log = false` also disables creation of statistics and rejudge writers. Heartbeats are emitted every 60 seconds. Missing frames produce warnings; video end does not automatically exit the main loop in the current monitoring implementation.
+Setting `save_detection_log = false` also disables creation of statistics and rejudge writers. Cycle audit records remain enabled in the configured log directory. Review CSV `sealant_index` is the zero-based quadrant index (0–3); display labels are 01–04. Partial cases are recorded as Pending or Manual check required, never as Pass based on a short streak. Heartbeats are emitted every 60 seconds. Missing frames produce warnings; video end does not automatically exit the main loop in the current monitoring implementation.
 
 ## Tests
 
@@ -185,7 +171,7 @@ python -m pytest test/ -q
 
 The suite uses real OpenCV calculations with simulated camera, YOLO, GUI and USB interfaces. It does not download a model or operate devices. See [ranked test conditions and manual acceptance procedures](doc/testing.md). Tests marked `known_issue` deliberately characterize existing limitations; they are not production acceptance criteria.
 
-The original 38 characterization cases pass against both the committed monolith and the extracted implementation. The expanded suite covers module boundaries and simulated lifecycle flows. Real-model accuracy and Windows hardware stability require the manual procedures.
+The original extraction was checked against 38 historical characterization cases. The active workflow now intentionally differs from that baseline; the current suite covers position memory, streaks, manual decisions, lifecycle records, module boundaries and simulated integration flows. Real-model accuracy and Windows hardware stability require the manual procedures.
 
 ## Tower recovery and remaining hardware checks
 

@@ -12,7 +12,7 @@ def test_config_defaults_and_supplied_ini(legacy, tmp_path):
     assert config.get_classes() == {"carrier": 0, "sealant": 1}
     root = Path(__file__).resolve().parents[1]
     supplied = legacy.ConfigManager(str(root / "config" / "config.ini"))
-    assert supplied.get_device() == "mps"
+    assert supplied.get_device() == "cuda:0"
     assert supplied.get_detection_config()["absent_tolerance_frames"] == 5
     assert supplied.get_rejudge_config()["review_window_padding"] == 50
     assert supplied.get_light_tower_config()['mode'] == 'mock'
@@ -144,3 +144,21 @@ def test_rejudge_append_and_fields(legacy, tmp_path):
     assert rows[0]["confidence"] == "0.9235"
     assert rows[0]["bbox_w"] == "3"
     assert rows[0]["frame_number"] == "42"
+
+
+@pytest.mark.parametrize('setting', ['case_pass_consecutive_frames', 'case_fail_consecutive_frames'])
+@pytest.mark.parametrize('value', ['0', '-1', '1.5', 'invalid'])
+def test_case_streak_settings_require_positive_integers(tmp_path, setting, value):
+    from cutsealant.config import ConfigManager
+    config = ConfigManager(tmp_path / 'config.ini')
+    config.config['DETECTION_SETTINGS'][setting] = value
+    with pytest.raises(ValueError):
+        config.get_detection_config()
+
+
+def test_case_streak_settings_default_for_old_ini(tmp_path):
+    from cutsealant.config import ConfigManager
+    config = ConfigManager(tmp_path / 'config.ini')
+    for key, expected in [('case_pass_consecutive_frames', 10), ('case_fail_consecutive_frames', 5)]:
+        del config.config['DETECTION_SETTINGS'][key]
+        assert config.get_detection_config()[key] == expected

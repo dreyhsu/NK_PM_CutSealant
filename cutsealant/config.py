@@ -55,7 +55,9 @@ class ConfigManager:
             'fps': '15',
             'stop_threshold_seconds': '0.95',
             'distance_threshold_pixels': '10',
-            'expected_case_count': '4',
+            'expected_case_count': '4',  # Legacy API only; cycles discover occupied quadrants.
+            'case_pass_consecutive_frames': '10',
+            'case_fail_consecutive_frames': '5',
             'kmeans_clusters': '3',
             'kmeans_rounds': '10',
             # Tolerance mechanism for detection box flickering
@@ -160,7 +162,7 @@ class ConfigManager:
         """Get detection configuration"""
         count_key = ('expected_case_count' if self.config.has_option(
             'DETECTION_SETTINGS', 'expected_case_count') else 'expected_module_count')
-        return {
+        options = {
             'fps': self.config.getint('DETECTION_SETTINGS', 'fps'),
             'stop_threshold_seconds': self.config.getfloat('DETECTION_SETTINGS', 'stop_threshold_seconds'),
             'distance_threshold_pixels': self.config.getint('DETECTION_SETTINGS', 'distance_threshold_pixels'),
@@ -172,6 +174,14 @@ class ConfigManager:
             'absent_tolerance_frames': self.config.getint('DETECTION_SETTINGS', 'absent_tolerance_frames', fallback=5),
             'result_hold_min_seconds': self.config.getfloat('DETECTION_SETTINGS', 'result_hold_min_seconds', fallback=2.0)
         }
+
+        for key, default in (('case_pass_consecutive_frames', 10),
+                             ('case_fail_consecutive_frames', 5)):
+            value = self.config.getint('DETECTION_SETTINGS', key, fallback=default)
+            if value <= 0:
+                raise ValueError(f'DETECTION_SETTINGS {key} must be a positive integer')
+            options[key] = value
+        return options
 
     def get_display_config(self):
         """Get display configuration"""

@@ -1,58 +1,45 @@
-"""Workflow functionality extracted from CutSealant V6.0.7."""
+"""Carrier cycles with persistent, carrier-relative case positions."""
 from dataclasses import dataclass, field
+from datetime import datetime
 
-import cv2
 import numpy as np
 
-WORKFLOW_STEPS = (
-    'carrier_in',
-    'inspecting_cases',
-    'carrier_out',
-)
+from .logs import CycleLogger
+
+WORKFLOW_STEPS = ('carrier_in', 'inspecting_cases', 'carrier_out')
 
 
 @dataclass
 class WorkflowPanelState:
-    """Persistent carrier cycle, with cases inspected on the carrier."""
-
     completed: set = field(default_factory=set)
     case_count: int = 0
     cycle_started: bool = False
     cycle_complete: bool = False
     inspection_started: bool = False
+    message: str = ''
+    case_labels: list = field(default_factory=lambda: ['Not discovered'] * 4)
 
     def reset(self):
-        """Prepare the panel for a carrier that has not arrived yet."""
         self.completed.clear()
         self.case_count = 0
-        self.cycle_started = False
-        self.cycle_complete = False
-        self.inspection_started = False
+        self.cycle_started = self.cycle_complete = self.inspection_started = False
+        self.message = ''
+        self.case_labels = ['Not discovered'] * 4
 
     def update(self, carrier_present, case_count, detection_state, carrier_released=False):
-        """Advance the display state from observations made for the current frame."""
-        case_count = max(0, int(case_count))
-
-        # Keep a completed cycle on screen until the next carrier starts a new one.
+        """Compatibility panel entry point; only readiness can complete inspection."""
         if carrier_present and self.cycle_complete:
             self.reset()
-
         if carrier_present:
             self.cycle_started = True
             self.completed.add('carrier_in')
-            # Show the current count so a blocked case is visible in the OSD.
-            self.case_count = case_count
-
-        if detection_state == 'RESULT_HOLD' and self.cycle_started:
+            self.case_count = max(self.case_count, int(case_count))
+        if detection_state == 'RESULT_HOLD' and self.case_count:
             self.inspection_started = True
-
-        if carrier_released:
-            if self.inspection_started:
-                self.completed.update(('inspecting_cases', 'carrier_out'))
-                self.cycle_complete = True
-            else:
-                # An incomplete carrier departure is not a completed cycle.
-                self.reset()
+            self.completed.add('inspecting_cases')
+        if carrier_released and 'inspecting_cases' in self.completed:
+            self.completed.add('carrier_out')
+            self.cycle_complete = True
 
     @property
     def completed_count(self):
@@ -64,18 +51,17 @@ class WorkflowPanelState:
 
     @property
     def phase(self):
+        if self.message:
+            return self.message
         if self.complete:
             return 'Cycle complete'
         current = next((step for step in WORKFLOW_STEPS if step not in self.completed), None)
         return self.label(current) if current else 'Cycle complete'
 
     def label(self, step):
-        labels = {
-            'carrier_in': 'Carrier-In',
-            'inspecting_cases': f'Inspecting {self.case_count} cases on carrier',
-            'carrier_out': 'Carrier-Out',
-        }
-        return labels.get(step, '')
+        return {'carrier_in': 'Carrier-In',
+                'inspecting_cases': f'Inspecting {self.case_count} cases on carrier',
+                'carrier_out': 'Carrier-Out'}.get(step, '')
 
     def status(self, step):
         if step in self.completed:
@@ -86,338 +72,361 @@ class WorkflowPanelState:
 
 @dataclass
 class InspectionState:
-    """Carrier state, changed by the main/UI thread only."""
-    detection_state: object = 'WAITING'
+    """Compatibility fields owned by the workflow/main thread."""
+    detection_state: str = 'WAITING'
     detection_result: object = None
     current_sealant_result: object = None
-    sealant_detection_results: object = field(default_factory=dict)
-    detection_triggered_time: object = 0
-    absent_frame_count: object = 0
-    result_hold_start_time: object = 0
-    detection_start_time: object = 0
+    sealant_detection_results: dict = field(default_factory=dict)
+    detection_triggered_time: float = 0
+    absent_frame_count: int = 0
+    result_hold_start_time: float = 0
+    detection_start_time: float = 0
     camera_error_start_time: float = 0
     pending_review: object = None
-    carrier_count: object = 0
-    user_reviewed_flag: object = False
+    carrier_count: int = 0
+    user_reviewed_flag: bool = False
     current_raw_frame: object = None
-    current_sealant_boxes: object = field(default_factory=list)
-    current_scores: object = field(default_factory=dict)
-    review_log_written: object = False
+    current_sealant_boxes: list = field(default_factory=list)
+    current_scores: dict = field(default_factory=dict)
+    review_log_written: bool = False
+
+
+@dataclass
+class CasePosition:
+    index: int
+    relative_bbox: list
+    bbox: list
+    status: str = 'CHECKING'
+    pass_streak: int = 0
+    fail_streak: int = 0
+    decision_source: object = None
+    observation: str = 'Unavailable'
+    crop: object = None
+    confidence: float = 0
+    evidence_frame: int = 0
+    user_reviewed: bool = False
+
+    @property
+    def passed(self):
+        return self.status == 'PASS'
+
+    @property
+    def needs_review(self):
+        return self.status in ('REVIEW', 'NG')
+
+    def reset_streaks(self):
+        if self.status == 'CHECKING':
+            self.pass_streak = self.fail_streak = 0
+
+    def label(self, threshold):
+        if self.passed:
+            return 'Manual Pass' if self.decision_source == 'manual' else 'Automatic Pass'
+        return {'REVIEW': 'Manual check required', 'NG': 'Confirmed NG'}.get(
+            self.status, f'Checking {self.pass_streak}/{threshold}')
+
+    def record(self):
+        return {'position_id': f'{self.index + 1:02}', 'index': self.index,
+                'relative_bbox': self.relative_bbox, 'bbox': self.bbox,
+                'status': self.status, 'decision_source': self.decision_source,
+                'pass_streak': self.pass_streak, 'fail_streak': self.fail_streak,
+                'last_observation': self.observation, 'confidence': self.confidence,
+                'evidence_frame': self.evidence_frame, 'user_reviewed': self.user_reviewed}
 
 
 class InspectionWorkflow:
-    """Composed service; context supplies shared application interfaces."""
-
     def __init__(self, context):
         self.context = context
         self.state = InspectionState()
         self.panel = WorkflowPanelState()
+        self.positions = {}
+        self.active = False
+        self.review_queue = set()
+        self.last_processed_frame = None
+        self.needs_stability = False
+        self.carrier_missing = False
+        self.cycle_logger = None
+        self.audit_session_id = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
 
-    def update_panel(self, carrier_present, case_count, carrier_released=False):
-        """Update the persistent overlay model after processing a frame."""
-        self.panel.update(
-            carrier_present,
-            case_count,
-            self.context.detection_state,
-            carrier_released,
-        )
+    @property
+    def ready(self):
+        return bool(self.positions) and all(case.passed for case in self.positions.values())
+
+    @staticmethod
+    def position_index(carrier, box):
+        x1, y1, x2, y2 = map(float, carrier)
+        cx, cy = (float(box[0]) + float(box[2])) / 2, (float(box[1]) + float(box[3])) / 2
+        if x2 <= x1 or y2 <= y1 or not (x1 <= cx < x2 and y1 <= cy < y2):
+            return None
+        return int(cx >= (x1 + x2) / 2) + 2 * int(cy >= (y1 + y2) / 2)
+
+    def update_panel(self, carrier_present, case_count=0, carrier_released=False):
+        if self.active:
+            self.panel.cycle_started = self.panel.inspection_started = True
+            self.panel.completed.add('carrier_in')
+            self.panel.case_count = len(self.positions)
+            if self.ready:
+                self.panel.completed.add('inspecting_cases')
+            else:
+                self.panel.completed.discard('inspecting_cases')
+            threshold = self.context.detection_config.get('case_pass_consecutive_frames', 10)
+            self.panel.case_labels = [self.positions[i].label(threshold) if i in self.positions
+                                      else 'Not discovered' for i in range(4)]
+            self.panel.message = ('Cycle incomplete - restore carrier or press X'
+                                  if self.carrier_missing and not self.ready else
+                                  'Ready - remove carrier' if self.ready else
+                                  'Manual check required - press M' if any(
+                                      c.needs_review for c in self.positions.values()) else '')
+        elif carrier_present and self.context.detection_state != 'CAMERA_ERROR':
+            self.panel.update(True, 0, 'WAITING')
 
     def reset_camera_error(self, current_status):
-        """Release the latched error; the next stop must pass the ROI check again."""
         ctx = self.context
         if ctx.detection_state != 'CAMERA_ERROR':
             return current_status
-        duration = round(ctx.clock.time() - ctx.camera_error_start_time, 1)
         if ctx.logger:
             ctx.logger.log_system_event('camera_error_reset_by_operator', {
-                'error_duration_seconds': duration,
-            })
+                'error_duration_seconds': round(ctx.clock.time() - ctx.camera_error_start_time, 1)})
             ctx.logger.log_state_change('CAMERA_ERROR', 'WAITING', 'operator_reset_c_key')
         ctx.detection_state = 'WAITING'
-        ctx.camera_error_start_time = 0
-        ctx.absent_frame_count = 0
+        ctx.camera_error_start_time = ctx.absent_frame_count = 0
         self.panel.reset()
         return ctx._call_light_once('Standby')
 
+    def _reset_streaks(self):
+        for case in self.positions.values():
+            case.reset_streaks()
+
     def _handle_objects_present(self, frame, raw_frame, boxes, categories, sealant_boxes, scores,
-                               current_status, stop_time, previous_centroid):
-        """Handle the case when carrier and sealant are detected"""
+                                current_status, stop_time, previous_centroid):
         ctx = self.context
-
-        # === NEW: Reset absent frame counter when objects are present ===
         ctx.absent_frame_count = 0
-
-        if ctx.detection_state == 'RESULT_HOLD':
-            # The result remains live while the carrier is present. A temporary
-            # obstruction can make it red, then all four passing cases turn it
-            # green without requiring a new carrier cycle.
-            sealant_result = ctx._cut_sealant_detection(raw_frame, sealant_boxes)
-            new_result = 'NG' if sealant_result else 'Pass'
-            ctx.current_sealant_result = sealant_result
-            if new_result != ctx.detection_result:
-                old_result = ctx.detection_result
-                ctx.detection_result = new_result
-                current_status = ctx._call_light_once(new_result)
-                self._update_review_snapshot(
-                    raw_frame, boxes, categories, sealant_boxes, scores)
-                print(f"Detection result updated: {old_result} → {new_result}")
-                if ctx.logger:
-                    ctx.logger.log_system_event('detection_result_updated', {
-                        'old_result': old_result,
-                        'new_result': new_result,
-                        'case_count': len(sealant_boxes),
-                    })
+        if ctx.detection_state == 'CAMERA_ERROR':
+            return current_status, 0, previous_centroid
+        if not self.active:
+            return self._check_detection_trigger(frame, raw_frame, boxes, categories,
+                                                 sealant_boxes, scores, current_status,
+                                                 stop_time, previous_centroid)
+        if self.last_processed_frame == ctx.frame_count:
             return current_status, stop_time, previous_centroid
-
-        elif ctx.detection_state == 'WAITING':
-            # Check if we should trigger detection
-            # V6.0: Pass scores for confidence tracking
-            return ctx._check_detection_trigger(
-                frame, raw_frame, boxes, categories, sealant_boxes, scores,
-                current_status, stop_time, previous_centroid
-            )
-
-        elif ctx.detection_state == 'DETECTED':
-            # Detection already triggered, maintain status
-            return current_status, stop_time, previous_centroid
-
-        return current_status, stop_time, previous_centroid
-
-    def _update_review_snapshot(self, raw_frame, boxes, categories, sealant_boxes, scores):
-        """Store the latest live result so Carrier-Out logs the final status."""
-        ctx = self.context
-        ctx.current_raw_frame = raw_frame.copy()
-        ctx.current_sealant_boxes = sealant_boxes.copy() if sealant_boxes else []
-        ctx.current_scores = {}
-        for box in sealant_boxes:
-            box_key = f"{box[0]}_{box[1]}_{box[2]}_{box[3]}"
-            for index, (detected_box, category) in enumerate(zip(boxes, categories)):
-                if (category == ctx.class_map.get('sealant', 1)
-                        and np.array_equal(detected_box, box)):
-                    ctx.current_scores[box_key] = (
-                        float(scores[index]) if index < len(scores) else 0.0)
-                    break
-
-        if ctx.pending_review is None:
-            return
-        ctx.pending_review['frame_number'] = ctx.frame_count
-        ctx.pending_review['user_reviewed'] = False
-        ctx.pending_review['sealants'] = []
-        for index, box in enumerate(sealant_boxes):
-            box_key = f"{box[0]}_{box[1]}_{box[2]}_{box[3]}"
-            is_broken = ctx.sealant_detection_results.get(box_key, True)
-            ctx.pending_review['sealants'].append({
-                'index': index,
-                'bbox': [int(box[0]), int(box[1]),
-                         int(box[2] - box[0]), int(box[3] - box[1])],
-                'ai_result': 'NG' if is_broken else 'Pass',
-                'confidence': ctx.current_scores.get(box_key, 0.0),
-                'user_agrees': True,
-            })
-
-    def _handle_objects_absent(self, current_status, stop_time, previous_centroid):
-        """Handle the case when carrier or sealant are not detected"""
-        ctx = self.context
-
-        # === NEW: Increment absent frame counter ===
-        ctx.absent_frame_count += 1
-
-        # Get tolerance settings from config
-        absent_tolerance = ctx.detection_config.get('absent_tolerance_frames', 5)
-        result_hold_min = ctx.detection_config.get('result_hold_min_seconds', 2.0)
-
-        if ctx.detection_state == 'RESULT_HOLD':
-            # === NEW: Check tolerance before resetting ===
-            # Check 1: Are we still within the absent tolerance?
-            if ctx.absent_frame_count < absent_tolerance:
-                # Still within tolerance, don't reset
-                return current_status, stop_time, previous_centroid
-
-            # Check 2: Are we still within the protection period?
-            time_in_result_hold = ctx.clock.time() - ctx.result_hold_start_time
-            if time_in_result_hold < result_hold_min:
-                # Still within protection period, don't reset
-                return current_status, stop_time, previous_centroid
-
-            # V6.0: Write pending review log before leaving RESULT_HOLD
-            ctx._write_pending_review_log()
-
-            # V6.0: Close manual review window if open
-            if ctx.manual_review_window and ctx.manual_review_window.is_open:
-                ctx.manual_review_window.close()
-
-            # Both checks passed, now reset
-            old_state = ctx.detection_state
-            ctx.detection_state = 'WAITING'
-            ctx.detection_result = None
-
-            print(f"Objects removed (absent {ctx.absent_frame_count} frames), state: {old_state} → {ctx.detection_state}")
-            if ctx.logger:
-                ctx.logger.log_state_change(old_state, ctx.detection_state,
-                    f"objects_removed_after_{ctx.absent_frame_count}_frames")
-
-            # Reset sealant detection state
-            ctx.current_sealant_result = None
-            ctx.sealant_detection_results = {}
-
-            # V6.0: Reset review state for next carrier
-            ctx.user_reviewed_flag = False
-            ctx.pending_review = None
-            ctx.current_raw_frame = None
-            ctx.current_sealant_boxes = []
-            ctx.current_scores = {}
-            ctx.review_log_written = False
-
-            # End detection session
-            if ctx.logger and ctx.logger.detection_session_active:
-                ctx.logger.log_detection_session_end()
-
-            # Reset to standby light (yellow)
-            current_status = ctx._call_light_once('Standby')
-
-            # Reset timing
-            stop_time = 0
-            previous_centroid = [0, 0]
-
-        elif ctx.detection_state in ['DETECTED', 'WAITING']:
-            # === NEW: Check tolerance before resetting ===
-            if ctx.absent_frame_count < absent_tolerance:
-                # Still within tolerance, maintain stop_time (don't reset)
-                return current_status, stop_time, previous_centroid
-
-            # Objects disappeared beyond tolerance
-            if ctx.detection_state == 'DETECTED':
-                old_state = ctx.detection_state
-                ctx.detection_state = 'WAITING'
-                print(f"Objects disappeared during detection (absent {ctx.absent_frame_count} frames), state: {old_state} → {ctx.detection_state}")
-                if ctx.logger:
-                    ctx.logger.log_state_change(old_state, ctx.detection_state,
-                        f"objects_disappeared_during_detection_after_{ctx.absent_frame_count}_frames")
-
-            # Ensure light is on standby if not already
-            if current_status != 'Standby':
-                current_status = ctx._call_light_once('Standby')
-
-            # Reset timing when truly absent
-            stop_time = 0
-            previous_centroid = [0, 0]
-
-        return current_status, stop_time, previous_centroid
+        carrier = ctx._check_correct_carrier(categories, boxes)
+        centroid = [(int(carrier[0]) + int(carrier[2])) // 2,
+                    (int(carrier[1]) + int(carrier[3])) // 2]
+        moving = np.linalg.norm(np.array(centroid) - previous_centroid) >= ctx.detection_config['distance_threshold_pixels']
+        self.carrier_missing = False
+        if moving or self.needs_stability:
+            self._reset_streaks()
+            self.needs_stability = True
+            stop_time = 0 if moving else stop_time + 1
+            if stop_time / ctx.detection_config['fps'] <= ctx.detection_config['stop_threshold_seconds']:
+                self.last_processed_frame = ctx.frame_count
+                self.update_panel(True)
+                return current_status, stop_time, centroid
+            self.needs_stability = False
+        self._process_cases(raw_frame, carrier, boxes, categories, scores)
+        return self.refresh_status(current_status), 0, centroid
 
     def _check_detection_trigger(self, frame, raw_frame, boxes, categories, sealant_boxes, scores,
-                               current_status, stop_time, previous_centroid):
-        """Check if detection should be triggered (only called in WAITING state)"""
+                                 current_status, stop_time, previous_centroid):
         ctx = self.context
-
+        carrier = ctx._check_correct_carrier(categories, boxes)
+        if carrier is None or ctx.detection_state == 'CAMERA_ERROR':
+            return current_status, 0, previous_centroid
+        centroid = [(int(carrier[0]) + int(carrier[2])) // 2,
+                    (int(carrier[1]) + int(carrier[3])) // 2]
         h, w = frame.shape[:2]
+        distance = np.linalg.norm(np.array(centroid) - previous_centroid)
+        if centroid[1] <= h / 2 or distance >= ctx.detection_config['distance_threshold_pixels']:
+            return current_status, 0, centroid
+        stop_time += 1
+        if stop_time / ctx.detection_config['fps'] <= ctx.detection_config['stop_threshold_seconds']:
+            return current_status, stop_time, centroid
+        cfg = ctx.camera_health_config
+        roi = [int(cfg.get('roi_x_ratio', .25) * w), int(cfg.get('roi_y_ratio', .25) * h),
+               int(cfg.get('roi_w_ratio', .5) * w), int(cfg.get('roi_h_ratio', .5) * h)]
+        if not (roi[0] <= centroid[0] <= roi[0] + roi[2] and roi[1] <= centroid[1] <= roi[1] + roi[3]):
+            ctx.detection_state = 'CAMERA_ERROR'
+            ctx.camera_error_start_time = ctx.clock.time()
+            if ctx.logger:
+                ctx.logger.log_state_change('WAITING', 'CAMERA_ERROR', 'carrier_centroid_outside_roi')
+                ctx.logger.log_system_event('camera_misalignment_detected', {
+                    'centroid': centroid, 'roi': dict(zip(('x', 'y', 'w', 'h'), roi))})
+            return ctx._call_light_once('Standby'), 0, centroid
+        self.active = True
+        self.positions.clear()
+        self.review_queue.clear()
+        self.panel.reset()
+        self.carrier_missing = self.needs_stability = False
+        ctx.carrier_count += 1
+        ctx.detection_start_time = ctx.clock.time()
+        ctx.detection_state = 'INSPECTING'
+        ctx.review_log_written = False
+        ctx.user_reviewed_flag = False
+        if ctx.logger:
+            ctx.logger.log_detection_session_start()
+            ctx.logger.log_state_change('WAITING', 'INSPECTING', 'carrier_stable_and_aligned')
+        self._process_cases(raw_frame, carrier, boxes, categories, scores)
+        return self.refresh_status(current_status), 0, centroid
 
-        carrier_pos = ctx._check_correct_carrier(categories, boxes)
-        centroid = [
-            int((carrier_pos[2] - carrier_pos[0]) / 2) + carrier_pos[0],
-            int((carrier_pos[3] - carrier_pos[1]) / 2) + carrier_pos[1]
-        ]
+    def _process_cases(self, frame, carrier, boxes, categories, scores):
+        ctx = self.context
+        if self.last_processed_frame == ctx.frame_count:
+            return
+        self.last_processed_frame = ctx.frame_count
+        candidates = {}
+        for n, (box, category) in enumerate(zip(boxes, categories)):
+            if category != ctx.class_map['sealant']:
+                continue
+            index = self.position_index(carrier, box)
+            if index is None or box[2] <= box[0] or box[3] <= box[1]:
+                continue
+            confidence = float(scores[n]) if n < len(scores) else 0.0
+            area = float(box[2] - box[0]) * float(box[3] - box[1])
+            rank = (confidence, -area)
+            if index not in candidates or rank > candidates[index][0]:
+                candidates[index] = (rank, box, confidence)
+        for index in sorted(candidates):
+            _, box, confidence = candidates[index]
+            bbox = list(map(int, box))
+            relative = [(bbox[0] - int(carrier[0])) / float(carrier[2] - carrier[0]),
+                        (bbox[1] - int(carrier[1])) / float(carrier[3] - carrier[1]),
+                        (bbox[2] - int(carrier[0])) / float(carrier[2] - carrier[0]),
+                        (bbox[3] - int(carrier[1])) / float(carrier[3] - carrier[1])]
+            if index not in self.positions:
+                self.positions[index] = CasePosition(index, relative, bbox)
+            case = self.positions[index]
+            # Preserve the frame that caused manual checking, and all final evidence.
+            if case.status != 'CHECKING':
+                continue
+            observation = ctx.inspection.observe(frame, bbox)
+            case.observation = observation
+            if observation == 'Unavailable':
+                case.reset_streaks()
+                continue
+            case.relative_bbox, case.bbox, case.confidence = relative, bbox, confidence
+            case.crop = frame[bbox[1]:bbox[3], bbox[0]:bbox[2]].copy()
+            case.evidence_frame = ctx.frame_count
+            if observation == 'Pass':
+                case.pass_streak += 1
+                case.fail_streak = 0
+                if case.pass_streak >= ctx.detection_config.get('case_pass_consecutive_frames', 10):
+                    case.status, case.decision_source = 'PASS', 'automatic'
+            else:
+                case.fail_streak += 1
+                case.pass_streak = 0
+                if case.fail_streak >= ctx.detection_config.get('case_fail_consecutive_frames', 5):
+                    case.status = 'REVIEW'
+                    self.review_queue.add(index)
+        for index, case in self.positions.items():
+            if index not in candidates:
+                case.reset_streaks()
+        ctx.current_raw_frame = frame.copy()
+        self._sync_pending_review()
 
-        cv2.circle(frame, centroid, 5, (0, 255, 0), 2)
+    def _sync_pending_review(self):
+        ctx = self.context
+        sealants = []
+        for index, case in sorted(self.positions.items()):
+            x1, y1, x2, y2 = case.bbox
+            ai_result = 'NG' if case.needs_review or case.decision_source == 'manual' else case.observation
+            final = ('REPASS' if case.decision_source == 'manual' and case.passed else
+                     'Pass' if case.passed else 'NG' if case.status == 'NG' else
+                     'Manual check required' if case.status == 'REVIEW' else 'Pending')
+            sealants.append({'index': index, 'bbox': [x1, y1, x2-x1, y2-y1],
+                             'ai_result': ai_result, 'confidence': case.confidence,
+                             'user_reviewed': case.user_reviewed,
+                             'user_agrees': not (case.passed and case.decision_source == 'manual'),
+                             'final_result': final})
+        ctx.pending_review = {'carrier_id': ctx.carrier_count, 'frame_number': ctx.frame_count,
+                              'user_reviewed': any(c.user_reviewed for c in self.positions.values()),
+                              'sealants': sealants}
+        ctx.sealant_detection_results = {'_'.join(map(str, c.bbox)): not c.passed
+                                         for c in self.positions.values()}
 
-        distance = np.linalg.norm(np.array(centroid) - np.array(previous_centroid))
-
-        if centroid[1] > h/2 and distance < ctx.detection_config['distance_threshold_pixels']:
-            stop_time += 1
-
-            if stop_time / ctx.detection_config['fps'] > ctx.detection_config['stop_threshold_seconds']:
-                print(f'Detection triggered after {round(stop_time/ctx.detection_config["fps"], 2)} seconds')
-
-                cfg = ctx.camera_health_config
-                roi_x = int(cfg.get('roi_x_ratio', 0.25) * w)
-                roi_y = int(cfg.get('roi_y_ratio', 0.25) * h)
-                roi_w = int(cfg.get('roi_w_ratio', 0.50) * w)
-                roi_h = int(cfg.get('roi_h_ratio', 0.50) * h)
-                if not (roi_x <= centroid[0] <= roi_x + roi_w
-                        and roi_y <= centroid[1] <= roi_y + roi_h):
-                    old_state = ctx.detection_state
-                    ctx.detection_state = 'CAMERA_ERROR'
-                    ctx.camera_error_start_time = ctx.clock.time()
-                    if ctx.logger:
-                        ctx.logger.log_state_change(old_state, 'CAMERA_ERROR',
-                                                   'carrier_centroid_outside_roi')
-                        ctx.logger.log_system_event('camera_misalignment_detected', {
-                            'centroid': centroid,
-                            'roi': {'x': roi_x, 'y': roi_y, 'w': roi_w, 'h': roi_h},
-                        })
-                    print('[CAMERA_HEALTH] Carrier stopped outside ROI; inspect alignment and press C')
-                    return ctx._call_light_once('Standby'), 0, centroid
-
-                # === NEW: Record detection start time for cycle time calculation ===
-                ctx.detection_start_time = ctx.clock.time()
-
-                # === STATE TRANSITION: WAITING → DETECTED ===
-                old_state = ctx.detection_state
-                ctx.detection_state = 'DETECTED'
-                if ctx.logger:
-                    ctx.logger.log_state_change(old_state, ctx.detection_state, "trigger_conditions_met")
-
-                # Start detection session
-                if ctx.logger and not ctx.logger.detection_session_active:
-                    ctx.logger.log_detection_session_start()
-
-                # Initial evaluation; RESULT_HOLD continues live evaluation.
-                sealant_result = ctx._cut_sealant_detection(raw_frame, sealant_boxes)
-                ctx.current_sealant_result = sealant_result
-
-                # Log detection results
-                ctx._log_detection_results(sealant_result, frame.shape, centroid)
-
-                # === STATE TRANSITION: DETECTED → RESULT_HOLD ===
-                old_state = ctx.detection_state
-                ctx.detection_state = 'RESULT_HOLD'
-
-                # === NEW: Record time entering RESULT_HOLD for protection period ===
+    def refresh_status(self, current_status):
+        ctx = self.context
+        if not self.active:
+            return current_status
+        if self.ready:
+            if ctx.detection_state != 'RESULT_HOLD':
                 ctx.result_hold_start_time = ctx.clock.time()
-
-                if ctx.logger:
-                    ctx.logger.log_state_change(old_state, ctx.detection_state, "detection_completed")
-
-                # Set result and update lights ONCE
-                ctx.carrier_count += 1
-                if not sealant_result:
-                    ctx.detection_result = 'Pass'
-                    current_status = ctx._call_light_once('Pass')
-                    print("Detection result: PASS - GREEN requested")
-                else:
-                    ctx.detection_result = 'NG'
-                    current_status = ctx._call_light_once('NG')
-                    print("Detection result: NG - RED requested")
-
-                # Save detection image
-                ctx._save_img_data(raw_frame, sealant_boxes, sealant_result)
-
-                # === NEW: Write statistics log (CSV) ===
-                if ctx.statistics_logger:
-                    cycle_time_ms = int((ctx.clock.time() - ctx.detection_start_time) * 1000)
-                    total_count = len(ctx.sealant_detection_results)
-                    ng_count = sum(1 for is_broken in ctx.sealant_detection_results.values() if is_broken)
-                    ok_count = total_count - ng_count
-                    ctx.statistics_logger.log_detection(
-                        sealant_result, ok_count, ng_count, total_count, cycle_time_ms
-                    )
-
-                # === V6.0: Build pending_review data for rejudge log ===
-                ctx.user_reviewed_flag = False  # Reset for new carrier
-
-                # Build pending_review structure
-                ctx.pending_review = {
-                    'carrier_id': ctx.carrier_count,
-                    'frame_number': ctx.frame_count,
-                    'user_reviewed': False,
-                    'sealants': []
-                }
-                self._update_review_snapshot(
-                    raw_frame, boxes, categories, sealant_boxes, scores)
-
-                print(f"[V6.0] Carrier #{ctx.carrier_count} pending review created with {len(ctx.pending_review['sealants'])} sealants")
-
-                stop_time = 0
+            ctx.detection_state, ctx.detection_result = 'RESULT_HOLD', 'Pass'
+            requested = 'Pass'
         else:
-            stop_time = 0
+            ctx.detection_state = 'INSPECTING'
+            requested = 'NG' if any(c.needs_review for c in self.positions.values()) else 'Tracking'
+            ctx.detection_result = 'NG' if requested == 'NG' else None
+        ctx.current_sealant_result = requested == 'NG'
+        self.update_panel(not self.carrier_missing)
+        return ctx._call_light_once(requested) if requested != current_status else current_status
 
-        return current_status, stop_time, centroid
+    def _handle_objects_absent(self, current_status, stop_time, previous_centroid):
+        ctx = self.context
+        ctx.absent_frame_count += 1
+        self._reset_streaks()
+        self.needs_stability = self.active
+        tolerance = ctx.detection_config.get('absent_tolerance_frames', 5)
+        if self.active:
+            if ctx.absent_frame_count >= tolerance:
+                self.carrier_missing = True
+                if self.ready and ctx.clock.time() - ctx.result_hold_start_time >= ctx.detection_config.get('result_hold_min_seconds', 2):
+                    self.finalize('Completed')
+                    return ctx._call_light_once('Standby'), 0, [0, 0]
+                self.update_panel(False)
+        elif ctx.detection_state != 'CAMERA_ERROR' and ctx.absent_frame_count >= tolerance:
+            current_status = ctx._call_light_once('Standby') if current_status != 'Standby' else current_status
+        return current_status, 0, [0, 0]
+
+    def finalize(self, outcome):
+        """Emit one terminal record, then release this cycle's mutable state."""
+        if not self.active:
+            return
+        ctx = self.context
+        self._sync_pending_review()
+        duration = max(0, int((ctx.clock.time() - ctx.detection_start_time) * 1000))
+        record = {'carrier_id': ctx.carrier_count, 'outcome': outcome,
+                  'cycle_time_ms': duration, 'source': ctx.source_name,
+                  'positions': [c.record() for _, c in sorted(self.positions.items())]}
+        if self.cycle_logger is None:
+            self.cycle_logger = CycleLogger('./logs', self.audit_session_id)
+        # Claim finalization before I/O, so cleanup cannot emit a second outcome.
+        # A logging failure must never prevent the operator from terminating.
+        self.active = False
+        outputs = [('cycle_audit', lambda: self.cycle_logger.write(record)),
+                   ('rejudge', ctx._write_pending_review_log)]
+        if outcome == 'Completed' and ctx.statistics_logger:
+            count = len(self.positions)
+            outputs.append(('statistics', lambda: ctx.statistics_logger.log_detection(
+                False, count, 0, count, duration)))
+        if ctx.logger:
+            outputs.extend([('cycle_event', lambda: ctx.logger.log_system_event('carrier_cycle_finalized', record)),
+                            ('session_end', ctx.logger.log_detection_session_end)])
+        for name, write in outputs:
+            try:
+                write()
+            except Exception as exc:
+                print(f'Cycle {ctx.carrier_count} {name} write failed: {exc}')
+                if ctx.logger:
+                    ctx.logger.log_error('cycle_record_error', exc,
+                                         {'carrier_id': ctx.carrier_count, 'output': name})
+        labels = list(self.panel.case_labels)
+        count = len(self.positions)
+        ctx.review.close()
+        self.positions.clear()
+        self.review_queue.clear()
+        self.last_processed_frame = None
+        self.needs_stability = self.carrier_missing = False
+        self.state = InspectionState(carrier_count=ctx.carrier_count)
+        self.panel.reset()
+        self.panel.message = f'Cycle {outcome.lower()}'
+        if outcome == 'Completed':
+            self.panel.case_labels = labels
+            self.panel.case_count = count
+            self.panel.completed.update(WORKFLOW_STEPS)
+            self.panel.cycle_started = self.panel.cycle_complete = True
+
+    def terminate(self, current_status):
+        self.finalize('Terminated')
+        if self.context.detection_state == 'CAMERA_ERROR':
+            return current_status
+        self._reset_streaks()
+        return self.context._call_light_once('Standby')
